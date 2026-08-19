@@ -50,6 +50,7 @@ public:
   void setParams(float freq_mhz, float bw_khz, uint8_t sf, uint8_t cr);
   void setTxPower(uint8_t dbm);
   void setRxBoostedGainMode(bool state) { _cfg.rx_agc = state; }
+  bool getRxBoostedGainMode() const { return _cfg.rx_agc; }
 
   // Counters the companion's radio stats report
   uint32_t getPacketsRecv() const { return _n_recv; }
