@@ -13,7 +13,7 @@ INC="-Isrc -Ilib/ed25519 -Iexamples/linux_companion -Iexamples/linux_companion/h
 # region here. These are the EU MeshCore settings this node runs on.
 DEF="-DLINUX_PLATFORM=1 -DMAX_GROUP_CHANNELS=8 -DMAX_CONTACTS=200
      -DLORA_FREQ=${LORA_FREQ:-869.618} -DLORA_BW=${LORA_BW:-62.5}
-     -DLORA_SF=${LORA_SF:-8} -DLORA_CR=${LORA_CR:-5}"
+     -DLORA_SF=${LORA_SF:-7} -DLORA_CR=${LORA_CR:-5}"
 FORCE="-include examples/linux_companion/host/FS.h"
 FLAGS="-std=c++17 -O2 -Wno-deprecated-declarations $DEF $FORCE $INC"
 

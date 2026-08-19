@@ -75,6 +75,8 @@ int main(int argc, char* argv[]) {
   radio_driver.begin();
   fast_rng.begin((long)time(NULL));
 
+  store.begin();                       // must precede the_mesh.begin(): it
+                                       // creates /identity and loads prefs
   the_mesh.begin(false /* no display */);
 
   TcpSerialInterface serial(port);
