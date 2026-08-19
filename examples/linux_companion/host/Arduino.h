@@ -84,11 +84,11 @@ inline void randomSeed(unsigned long seed) { srandom((unsigned int)seed); }
 #define PI 3.1415926535897932384626433832795
 #endif
 
-// Arduino's min/max are macros, so they must come after every declaration
-// that uses those words as identifiers (random(lo, hi) above, for one).
-#ifndef min
-#define min(a, b) ((a) < (b) ? (a) : (b))
-#endif
-#ifndef max
-#define max(a, b) ((a) > (b) ? (a) : (b))
-#endif
+// Arduino provides min/max as macros. Templates instead: a macro here eats
+// identifiers named min/max in later declarations, and breaks std::min /
+// std::max wherever this header is pulled in first.
+#include <type_traits>
+template <typename T, typename U>
+constexpr typename std::common_type<T, U>::type min(T a, U b) { return a < b ? a : b; }
+template <typename T, typename U>
+constexpr typename std::common_type<T, U>::type max(T a, U b) { return a > b ? a : b; }
