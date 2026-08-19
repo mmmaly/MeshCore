@@ -11,7 +11,7 @@ INC="-Isrc -Ilib/ed25519 -Iexamples/linux_companion -Iexamples/linux_companion/h
      -Iexamples/companion_radio -Itest/mocks -I$SSL/include"
 # Radio defaults are #ifndef-guarded in MyMesh.h, so a deployment picks its
 # region here. These are the EU MeshCore settings this node runs on.
-DEF="-DLINUX_PLATFORM=1 -DMAX_GROUP_CHANNELS=8 -DMAX_CONTACTS=200
+DEF="-DLINUX_PLATFORM=1 -DMESH_DEBUG=${MESH_DEBUG:-1} -DMAX_GROUP_CHANNELS=8 -DMAX_CONTACTS=200
      -DLORA_FREQ=${LORA_FREQ:-869.618} -DLORA_BW=${LORA_BW:-62.5}
      -DLORA_SF=${LORA_SF:-7} -DLORA_CR=${LORA_CR:-5}"
 FORCE="-include examples/linux_companion/host/FS.h"
