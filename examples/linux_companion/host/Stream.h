@@ -1,4 +1,6 @@
 #pragma once
+#include <cstdarg>
+#include <cstdio>
 
 #include <stddef.h>
 #include <stdint.h>
@@ -52,6 +54,16 @@ public:
     size_t println(char c) { size_t n = print(c); return n + write('\n'); }
     template <typename T> size_t println(T v, int r = DEC) { size_t n = print(v, r); return n + write('\n'); }
     
+    // Arduino's Print::printf (ESP/nRF cores provide it); firmware uses it.
+    virtual int printf(const char* fmt, ...) {
+        va_list ap; va_start(ap, fmt);
+        char buf[512];
+        int n = vsnprintf(buf, sizeof(buf), fmt, ap);
+        va_end(ap);
+        if (n > 0) write((const uint8_t*)buf, (size_t)(n < (int)sizeof(buf) ? n : (int)sizeof(buf) - 1));
+        return n;
+    }
+
     virtual void flush() { /* Empty implementation for backward compatibility */ }    
 };
 

@@ -176,6 +176,8 @@ bool DataStore::formatFileSystem() {
   bool fs_success = ((fs::SPIFFSFS *)_fs)->format();
   esp_err_t nvs_err = nvs_flash_erase(); // no need to reinit, will be done by reboot
   return fs_success && (nvs_err == ESP_OK);
+#elif defined(LINUX_PLATFORM)
+  return _fs->format();   // host build: a no-op, never wipes the real filesystem
 #else
   #error "need to implement format()"
 #endif

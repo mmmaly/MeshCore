@@ -34,18 +34,19 @@ static pid_t spawn_pipe(const std::vector<std::string>& argv, int* out_fd) {
 void SdrRadio::begin() {
   if (_running) return;
   _running = true;
-  _reader = std::thread(&SdrRadio::readerLoop, this);
+  _reader = std::thread(&SdrRadio::superviseLoop, this);
 }
 
 void SdrRadio::stop() {
   if (!_running) return;
   _running = false;
-  if (_rx_pid > 0) { kill(_rx_pid, SIGTERM); waitpid(_rx_pid, nullptr, 0); _rx_pid = -1; }
-  if (_reader.joinable()) _reader.join();
+  if (_rx_pid > 0) { kill(_rx_pid, SIGTERM); _rx_pid = -1; }
+  // Never join from the reader thread itself (a signal can land there).
+  if (_reader.joinable() && _reader.get_id() != std::this_thread::get_id())
+    _reader.join();
 }
 
-// lora_rx stdout contract: "rx cfg: ... snr=<x> ..." then "rx ok: <hex>".
-void SdrRadio::readerLoop() {
+std::vector<std::string> SdrRadio::rxArgv() const {
   std::vector<std::string> argv = {_cfg.rx_binary};
   if (!_cfg.rx_channels.empty()) { argv.push_back("-C"); argv.push_back(_cfg.rx_channels); }
   if (!_cfg.rx_sfs.empty())      { argv.push_back("-S"); argv.push_back(_cfg.rx_sfs); }
@@ -53,11 +54,31 @@ void SdrRadio::readerLoop() {
   argv.push_back("-p"); argv.push_back(std::to_string(_cfg.rx_ppm));
   if (_cfg.rx_agc) { argv.push_back("-G"); argv.push_back("-T"); }
   if (!_cfg.rx_device.empty()) { argv.push_back("-d"); argv.push_back(_cfg.rx_device); }
+  return argv;
+}
 
-  int fd = -1;
-  _rx_pid = spawn_pipe(argv, &fd);
-  if (_rx_pid < 0) { fprintf(stderr, "[sdr] lora_rx spawn failed\n"); return; }
-  _rx_fd = fd;
+// Keep a receiver alive for the process lifetime: respawn when lora_rx exits
+// (USB glitch, crash, or a deliberate kill after setParams retunes it).
+void SdrRadio::superviseLoop() {
+  while (_running) {
+    int fd = -1;
+    _rx_pid = spawn_pipe(rxArgv(), &fd);
+    if (_rx_pid > 0) {
+      _rx_fd = fd;
+      readPipe(fd);
+      int st = 0; waitpid(_rx_pid, &st, 0);
+      _rx_pid = -1;
+    } else {
+      fprintf(stderr, "[sdr] lora_rx spawn failed\n");
+    }
+    if (_running) {
+      for (int i = 0; i < 50 && _running; i++) usleep(100 * 1000);   // 5 s
+    }
+  }
+}
+
+// lora_rx stdout contract: "rx cfg: ... snr=<x> ..." then "rx ok: <hex>".
+void SdrRadio::readPipe(int fd) {
   FILE* f = fdopen(fd, "r");
   if (!f) { close(fd); return; }
   char line[16384];
@@ -77,6 +98,7 @@ void SdrRadio::readerLoop() {
         std::lock_guard<std::mutex> lk(_mtx);
         _last_snr = pending_snr;
         _rx.push_back(std::move(pkt));
+        _n_recv++;
         if (_rx.size() > 256) _rx.pop_front();
       }
     }
@@ -113,7 +135,9 @@ bool SdrRadio::startSendRaw(const uint8_t* bytes, int len) {
     execvp(a[0], a.data()); _exit(127);
   }
   int st = 0; waitpid(pid, &st, 0);
-  return WIFEXITED(st) && WEXITSTATUS(st) == 0;
+  bool ok = WIFEXITED(st) && WEXITSTATUS(st) == 0;
+  if (ok) _n_sent++;
+  return ok;
 }
 
 // Semtech airtime, approximated (ms).
@@ -126,4 +150,22 @@ uint32_t SdrRadio::getEstAirtimeFor(int len_bytes) {
 
 float SdrRadio::packetScore(float snr, int packet_len) {
   return snr;   // simple: higher SNR wins (firmware weights by airtime too)
+}
+
+void SdrRadio::setParams(float freq_mhz, float bw_khz, uint8_t sf, uint8_t cr) {
+  _cfg.tx_freq = (uint32_t)(freq_mhz * 1000000.0f);
+  _cfg.bw = (uint32_t)(bw_khz * 1000.0f);
+  _cfg.tx_sf = sf;
+  _cfg.tx_cr = cr >= 5 ? cr - 4 : cr;
+  std::string f = std::to_string(_cfg.tx_freq);
+  if (_cfg.rx_channels.find(f) == std::string::npos)
+    _cfg.rx_channels += (_cfg.rx_channels.empty() ? "" : ",") + f;
+  fprintf(stderr, "[sdr] params: %u Hz bw %u sf %u cr %u - restarting rx\n",
+          _cfg.tx_freq, _cfg.bw, sf, cr);
+  if (_rx_pid > 0) kill(_rx_pid, SIGTERM);   // reader loop exits; begin() restarts it
+}
+
+void SdrRadio::setTxPower(uint8_t dbm) {
+  // HackRF gain is set host-side (tx_vga/tx_amp); nothing to do per-packet.
+  fprintf(stderr, "[sdr] tx power request %u dBm (host-configured gains)\n", dbm);
 }

@@ -23,7 +23,7 @@ public:
   };
 
   explicit SdrRadio(const Config& cfg) : _cfg(cfg) {}
-  ~SdrRadio() override { stop(); }
+  ~SdrRadio() { stop(); }
 
   void begin() override;
   void stop();
@@ -36,16 +36,32 @@ public:
   uint32_t getEstAirtimeFor(int len_bytes) override;
   float packetScore(float snr, int packet_len) override;
   float getLastSNR() const override { return _last_snr; }
+
+  // Called by MyMesh when the app changes radio settings. Retuning the
+  // transmitter is immediate; the receiver is restarted so lora_rx picks up
+  // the new frequency/SF (an SDR can watch several at once, so the new
+  // channel is added rather than replacing the list).
+  void setParams(float freq_mhz, float bw_khz, uint8_t sf, uint8_t cr);
+  void setTxPower(uint8_t dbm);
+  void setRxBoostedGainMode(bool state) { _cfg.rx_agc = state; }
+
+  // Counters the companion's radio stats report
+  uint32_t getPacketsRecv() const { return _n_recv; }
+  uint32_t getPacketsSent() const { return _n_sent; }
+  uint32_t getPacketsRecvErrors() const { return 0; }  // lora_rx only emits CRC-valid frames
   float getLastRSSI() const override { return -105.0f + _last_snr; }
 
 private:
-  void readerLoop();
+  void superviseLoop();
+  void readPipe(int fd);
+  std::vector<std::string> rxArgv() const;
   Config _cfg;
   std::thread _reader;
   std::atomic<bool> _running{false};
   std::mutex _mtx;
   std::deque<std::vector<uint8_t>> _rx;   // complete packets from lora_rx
   float _last_snr = 0.0f;
+  uint32_t _n_recv = 0, _n_sent = 0;
   pid_t _rx_pid = -1;
   int _rx_fd = -1;
 };

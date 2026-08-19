@@ -47,3 +47,36 @@ Nothing under `src/` or `examples/companion_radio/` is modified.
 g++ -std=c++17 -c src/Mesh.cpp -Isrc -Ilib/ed25519 \
     -Iexamples/linux_companion/host -I$(brew --prefix openssl)/include
 ```
+
+## Result of the spike
+
+It works. The stock companion firmware runs on a Linux host and answers the
+companion protocol over TCP:
+
+```
+DEVICE_INFO: code=13 fw_ver=13 max_contacts=200 max_channels=8
+  model='MeshCore SDR (RTL-SDR rx, HackRF tx)'  firmware='v1.17.1'
+SELF_INFO:   code=5 pubkey=7a9a144e62447aa5... freq=915000 bw=250000 sf=10 cr=5
+```
+
+"What firmware are you on?" now has an honest answer: **v1.17.1**, the same
+sources every other node runs.
+
+The only change outside this directory is a two-line `LINUX_PLATFORM` branch
+in `DataStore::formatFileSystem()`, where the platform switch previously
+ended in `#error "need to implement format()"`. That is the shape an
+upstream "add a Linux platform" change would take.
+
+### It immediately found a real bug
+
+Within minutes of running side by side with the hand-written reimplementation
+this replaces, the two disagreed about `SELF_INFO`: firmware sends
+`_prefs.freq * 1000` where `freq` is **MHz**, i.e. the field is **kHz** -
+while bandwidth in the next field is `bw * 1000` from kHz, i.e. **Hz**. The
+app matches firmware (`freqHz = (freqMHz * 1000).round()` - a variable whose
+name says Hz while carrying kHz). The reimplementation had been sending Hz,
+so it reported a frequency 1000x too large and would have retuned to
+nonsense had anyone changed radio settings from the app.
+
+That is the whole argument for this port in one bug: behaviour you mirror by
+reading is behaviour you can get subtly wrong forever, and never notice.
