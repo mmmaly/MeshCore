@@ -2,6 +2,7 @@
 #include <cstdio>
 #include <cstring>
 #include <cmath>
+#include <cstdlib>
 #include <unistd.h>
 #include <signal.h>
 #include <sys/wait.h>
@@ -153,13 +154,18 @@ float SdrRadio::packetScore(float snr, int packet_len) {
 }
 
 void SdrRadio::setParams(float freq_mhz, float bw_khz, uint8_t sf, uint8_t cr) {
-  _cfg.tx_freq = (uint32_t)(freq_mhz * 1000000.0f);
-  _cfg.bw = (uint32_t)(bw_khz * 1000.0f);
+  // Round to kHz: prefs.freq is a float in MHz, so 869.618 lands on
+  // 869617984 Hz if taken literally - 16 Hz off, and enough to make the
+  // channel list disagree with itself.
+  _cfg.tx_freq = (uint32_t)(llround((double)freq_mhz * 1000.0) * 1000);
+  _cfg.bw = (uint32_t)llround((double)bw_khz * 1000.0);
   _cfg.tx_sf = sf;
   _cfg.tx_cr = cr >= 5 ? cr - 4 : cr;
-  std::string f = std::to_string(_cfg.tx_freq);
-  if (_cfg.rx_channels.find(f) == std::string::npos)
-    _cfg.rx_channels += (_cfg.rx_channels.empty() ? "" : ",") + f;
+  // One radio, one channel - matching what the firmware above believes it
+  // has. (Listening to several at once is an SDR luxury the mesh stack has
+  // no way to express.)
+  _cfg.rx_channels = std::to_string(_cfg.tx_freq);
+  _cfg.rx_sfs = std::to_string(sf);
   fprintf(stderr, "[sdr] params: %u Hz bw %u sf %u cr %u - restarting rx\n",
           _cfg.tx_freq, _cfg.bw, sf, cr);
   if (_rx_pid > 0) kill(_rx_pid, SIGTERM);   // reader loop exits; begin() restarts it
