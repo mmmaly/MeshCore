@@ -35,14 +35,25 @@ public:
         return write((const uint8_t *) buffer, size);
     }
 
-    virtual size_t print(unsigned char b, int r = DEC) { return 0; }
-    virtual size_t print(int v, int r = DEC) { return 0; }
-    virtual size_t print(unsigned int v, int r = DEC) { return 0; }
-    virtual size_t print(long v, int r = DEC) { return 0; }
-    virtual size_t print(unsigned long v, int r = DEC) { return 0; }
-    virtual size_t print(long long v, int r = DEC) { return 0; }
-    virtual size_t print(unsigned long long v, int r = DEC) { return 0; }
-    virtual size_t print(double v, int p = 2) { return 0; }
+    // These MUST actually emit: firmware serialises its preferences through
+    // Print, and the unit-test mocks stub them out to write nothing - which
+    // silently produced a prefs file with every numeric value empty.
+    size_t printNum(const char* fmt, ...) {
+        va_list ap; va_start(ap, fmt);
+        char buf[64];
+        int n = vsnprintf(buf, sizeof(buf), fmt, ap);
+        va_end(ap);
+        if (n <= 0) return 0;
+        return write((const uint8_t*)buf, (size_t)n);
+    }
+    virtual size_t print(unsigned char b, int r = DEC) { return printNum(r == HEX ? "%X" : "%u", (unsigned)b); }
+    virtual size_t print(int v, int r = DEC) { return printNum(r == HEX ? "%X" : "%d", v); }
+    virtual size_t print(unsigned int v, int r = DEC) { return printNum(r == HEX ? "%X" : "%u", v); }
+    virtual size_t print(long v, int r = DEC) { return printNum(r == HEX ? "%lX" : "%ld", v); }
+    virtual size_t print(unsigned long v, int r = DEC) { return printNum(r == HEX ? "%lX" : "%lu", v); }
+    virtual size_t print(long long v, int r = DEC) { return printNum(r == HEX ? "%llX" : "%lld", v); }
+    virtual size_t print(unsigned long long v, int r = DEC) { return printNum(r == HEX ? "%llX" : "%llu", v); }
+    virtual size_t print(double v, int p = 2) { return printNum("%.*f", p, v); }
 
     size_t print(char c) { return write(c); }
     size_t print(const char* str) { return write(str); }
