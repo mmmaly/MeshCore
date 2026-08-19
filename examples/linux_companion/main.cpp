@@ -37,8 +37,10 @@ MyMesh the_mesh(radio_driver, fast_rng, rtc_clock, tables, store);
 static TcpSerialInterface* g_serial = nullptr;
 
 static void on_signal(int) {
-  if (g_serial) g_serial->stop();
-  radio_driver.stop();
+  // Joining threads from a signal handler is neither async-signal-safe nor
+  // reliable (a blocking read() need not wake), and it hung shutdown hard
+  // enough to need SIGKILL. Just leave: the OS reaps the sockets, and the
+  // lora_rx child carries PR_SET_PDEATHSIG so it dies with us.
   _exit(0);
 }
 
