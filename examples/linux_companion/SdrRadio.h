@@ -1,0 +1,51 @@
+#pragma once
+#include <Dispatcher.h>       // mesh::Radio
+#include <deque>
+#include <mutex>
+#include <string>
+#include <thread>
+#include <vector>
+#include <atomic>
+
+// A mesh::Radio whose PHY is a pair of SDRs: an RTL-SDR receiving through
+// lora_rx, a HackRF transmitting through lora_tx. This is the whole point of
+// the port - it slots in exactly where a CustomSX1262Wrapper would, so all
+// of MyMesh.cpp / BaseChatMesh.cpp / Mesh.cpp run unmodified above it.
+class SdrRadio : public mesh::Radio {
+public:
+  struct Config {
+    std::string rx_binary = "lora_rx", tx_binary = "lora_tx";
+    std::string rx_device, rx_channels = "869618000", rx_sfs = "8";
+    uint32_t bw = 62500, tx_freq = 869618000;
+    int rx_ppm = 0, tx_sf = 8, tx_cr = 1, tx_ppm = 0, tx_vga = 47;
+    bool rx_agc = true, tx_amp = true;
+    double tx_duty = 10.0;
+  };
+
+  explicit SdrRadio(const Config& cfg) : _cfg(cfg) {}
+  ~SdrRadio() override { stop(); }
+
+  void begin() override;
+  void stop();
+
+  int recvRaw(uint8_t* bytes, int sz) override;
+  bool startSendRaw(const uint8_t* bytes, int len) override;
+  bool isSendComplete() override { return true; }   // lora_tx is synchronous
+  void onSendFinished() override {}
+  bool isInRecvMode() const override { return true; }
+  uint32_t getEstAirtimeFor(int len_bytes) override;
+  float packetScore(float snr, int packet_len) override;
+  float getLastSNR() const override { return _last_snr; }
+  float getLastRSSI() const override { return -105.0f + _last_snr; }
+
+private:
+  void readerLoop();
+  Config _cfg;
+  std::thread _reader;
+  std::atomic<bool> _running{false};
+  std::mutex _mtx;
+  std::deque<std::vector<uint8_t>> _rx;   // complete packets from lora_rx
+  float _last_snr = 0.0f;
+  pid_t _rx_pid = -1;
+  int _rx_fd = -1;
+};
