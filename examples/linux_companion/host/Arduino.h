@@ -26,8 +26,8 @@ inline uint32_t micros() {
 }
 inline void delay(uint32_t ms) { usleep(ms * 1000); }
 inline void delayMicroseconds(uint32_t us) { usleep(us); }
-inline long random(long max) { return max > 0 ? ::random() % max : 0; }
-inline long random(long min, long max) { return max > min ? min + ::random() % (max - min) : min; }
+inline long random(long hi) { return hi > 0 ? ::random() % hi : 0; }
+inline long random(long lo, long hi) { return hi > lo ? lo + ::random() % (hi - lo) : lo; }
 
 // Arduino's global Serial. MeshCore's debug macros expand to Serial.printf,
 // and firmware sources print to it directly; on a host it goes to stderr so
@@ -75,13 +75,6 @@ inline char* dtostrf(double v, int width, int prec, char* s) {
   sprintf(s, "%*.*f", width, prec, v); return s;
 }
 
-#ifndef min
-#define min(a, b) ((a) < (b) ? (a) : (b))
-#endif
-#ifndef max
-#define max(a, b) ((a) > (b) ? (a) : (b))
-#endif
-
 #ifndef constrain
 #define constrain(x, lo, hi) ((x) < (lo) ? (lo) : ((x) > (hi) ? (hi) : (x)))
 #endif
@@ -89,4 +82,13 @@ inline void randomSeed(unsigned long seed) { srandom((unsigned int)seed); }
 
 #ifndef PI
 #define PI 3.1415926535897932384626433832795
+#endif
+
+// Arduino's min/max are macros, so they must come after every declaration
+// that uses those words as identifiers (random(lo, hi) above, for one).
+#ifndef min
+#define min(a, b) ((a) < (b) ? (a) : (b))
+#endif
+#ifndef max
+#define max(a, b) ((a) > (b) ? (a) : (b))
 #endif
