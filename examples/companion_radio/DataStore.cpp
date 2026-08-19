@@ -47,8 +47,8 @@ static File openWrite(FILESYSTEM* fs, const char* filename) {
 #endif
 
 void DataStore::begin() {
-#if defined(RP2040_PLATFORM)
-  identity_store.begin();
+#if defined(RP2040_PLATFORM) || defined(LINUX_PLATFORM)
+  identity_store.begin();   // real directories must be created; SPIFFS is flat
 #endif
 
 #if defined(NRF52_PLATFORM) || defined(STM32_PLATFORM)

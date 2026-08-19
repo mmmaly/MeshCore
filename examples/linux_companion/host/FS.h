@@ -92,6 +92,12 @@ public:
       File d; d._dir = opendir(p.c_str()); d._path = p; d._name = path;
       return d;                       // opening a directory = iterate it
     }
+    // Writing to a path whose directory does not exist is normal on the
+    // flat SPIFFS namespace firmware usually runs on; here it needs a mkdir.
+    if (mode && (mode[0] == 'w' || mode[0] == 'a')) {
+      size_t slash = p.find_last_of('/');
+      if (slash != std::string::npos) ::mkdir(p.substr(0, slash).c_str(), 0700);
+    }
     FILE* f = fopen(p.c_str(), mode);
     if (!f && create) f = fopen(p.c_str(), "w+");
     File r(f, p);
