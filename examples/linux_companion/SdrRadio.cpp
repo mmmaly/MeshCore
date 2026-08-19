@@ -149,8 +149,22 @@ uint32_t SdrRadio::getEstAirtimeFor(int len_bytes) {
   return (uint32_t)(nsym * tsym * 1000.0);
 }
 
+// Mirrors RadioLibWrapper::packetScoreInt: a 0..1 estimate of how likely
+// this reception was to succeed, which Dispatcher turns into a rebroadcast
+// delay. Returning raw SNR (as a first cut did) puts every packet past the
+// threshold, so everything is processed immediately and the delay that
+// spaces out flood retransmissions never happens.
 float SdrRadio::packetScore(float snr, int packet_len) {
-  return snr;   // simple: higher SNR wins (firmware weights by airtime too)
+  // Approximate SNR floor per SF, from the Semtech datasheets
+  static const float snr_threshold[] = { -7.5f, -10.0f, -12.5f, -15.0f, -17.5f, -20.0f };
+  int sf = _cfg.tx_sf;
+  if (sf < 7 || sf > 12) return 0.0f;
+  float thresh = snr_threshold[sf - 7];
+  if (snr < thresh) return 0.0f;               // no realistic chance
+  double success = (snr - thresh) / 10.0;
+  double collision_penalty = 1.0 - (packet_len / 256.0);
+  double v = success * collision_penalty;
+  return (float)(v < 0.0 ? 0.0 : (v > 1.0 ? 1.0 : v));
 }
 
 void SdrRadio::setParams(float freq_mhz, float bw_khz, uint8_t sf, uint8_t cr) {
