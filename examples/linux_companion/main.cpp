@@ -20,8 +20,7 @@
 LinuxBoard board;
 LinuxRTCClock rtc_clock;
 SensorManager sensors;
-static SdrRadio::Config g_radio_cfg;
-SdrRadio radio_driver(g_radio_cfg);
+SdrRadio radio_driver;
 
 mesh::LocalIdentity radio_new_identity() {
   LinuxRNG rng;
@@ -46,6 +45,7 @@ static void on_signal(int) {
 int main(int argc, char* argv[]) {
   int port = 5000;
   std::string data_dir = ".";
+  SdrRadio::Config& g_radio_cfg = radio_driver.config();
   for (int i = 1; i < argc; i++) {
     if (!strcmp(argv[i], "-p") && i + 1 < argc) port = atoi(argv[++i]);
     else if (!strcmp(argv[i], "-d") && i + 1 < argc) data_dir = argv[++i];

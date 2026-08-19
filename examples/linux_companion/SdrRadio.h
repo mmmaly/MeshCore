@@ -23,6 +23,12 @@ public:
   };
 
   explicit SdrRadio(const Config& cfg) : _cfg(cfg) {}
+  SdrRadio() = default;
+
+  // Mutable access: this object is a global constructed before main() runs,
+  // so command-line settings have to be applied to it, not to whatever
+  // config it was constructed from.
+  Config& config() { return _cfg; }
   ~SdrRadio() { stop(); }
 
   void begin() override;
