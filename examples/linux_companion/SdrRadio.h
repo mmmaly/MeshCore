@@ -28,6 +28,13 @@ public:
     // costs nothing in signal quality: lora_tx defaults to 0.7 for callers
     // who may not know that, but a node wants every dB. Worth +3.1 dB.
     double tx_level = 1.0;
+    // Some opens of a cheap RTL stick come up silently mistuned: the child
+    // streams samples at normal CPU, reports its gain, and decodes nothing,
+    // forever. Only a reopen re-rolls the tuner, so if no packet arrives for
+    // this long the receiver is killed and respawned. On a live LoRa channel
+    // real silence this long does not happen; on a genuinely idle channel the
+    // cost is a few seconds of downtime per interval. 0 disables.
+    int rx_watchdog_s = 600;
   };
 
   explicit SdrRadio(const Config& cfg) : _cfg(cfg) {}
@@ -69,6 +76,7 @@ public:
 
 private:
   void superviseLoop();
+  void watchdogLoop();
   void readPipe(int fd);
   std::vector<std::string> rxArgv() const;
 
@@ -91,4 +99,6 @@ private:
   std::atomic<uint32_t> _n_recv{0}, _n_sent{0};
   std::atomic<pid_t> _rx_pid{-1};
   std::atomic<int> _rx_fd{-1};
+  std::atomic<time_t> _last_rx{0};        // last decode, or last child spawn
+  std::thread _watchdog;
 };
