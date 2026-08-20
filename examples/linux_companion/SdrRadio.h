@@ -31,7 +31,8 @@ public:
 
   // Mutable access: this object is a global constructed before main() runs,
   // so command-line settings have to be applied to it, not to whatever
-  // config it was constructed from.
+  // config it was constructed from. Only safe before begin() starts the
+  // supervisor thread; afterwards _cfg belongs to _cfg_mtx.
   Config& config() { return _cfg; }
   ~SdrRadio() { stop(); }
 
@@ -53,8 +54,8 @@ public:
   // channel is added rather than replacing the list).
   void setParams(float freq_mhz, float bw_khz, uint8_t sf, uint8_t cr);
   void setTxPower(uint8_t dbm);
-  void setRxBoostedGainMode(bool state) { _cfg.rx_agc = state; }
-  bool getRxBoostedGainMode() const { return _cfg.rx_agc; }
+  void setRxBoostedGainMode(bool state);
+  bool getRxBoostedGainMode() const;
 
   // Counters the companion's radio stats report
   uint32_t getPacketsRecv() const { return _n_recv; }
@@ -66,13 +67,24 @@ private:
   void superviseLoop();
   void readPipe(int fd);
   std::vector<std::string> rxArgv() const;
+
+  // SNR travels with its packet. The reader thread parses ahead of the mesh
+  // thread's recvRaw(), so a single "most recent SNR" field would hand the
+  // popped packet a *later* packet's measurement - which then lands in the
+  // app's signal report and in packetScore().
+  struct RxPacket {
+    std::vector<uint8_t> bytes;
+    float snr;
+  };
+
   Config _cfg;
+  mutable std::mutex _cfg_mtx;            // _cfg: mesh thread writes, supervisor reads
   std::thread _reader;
   std::atomic<bool> _running{false};
   std::mutex _mtx;
-  std::deque<std::vector<uint8_t>> _rx;   // complete packets from lora_rx
-  float _last_snr = 0.0f;
-  uint32_t _n_recv = 0, _n_sent = 0;
-  pid_t _rx_pid = -1;
-  int _rx_fd = -1;
+  std::deque<RxPacket> _rx;               // complete packets from lora_rx
+  std::atomic<float> _last_snr{0.0f};     // SNR of the packet recvRaw() last returned
+  std::atomic<uint32_t> _n_recv{0}, _n_sent{0};
+  std::atomic<pid_t> _rx_pid{-1};
+  std::atomic<int> _rx_fd{-1};
 };

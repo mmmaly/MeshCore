@@ -14,16 +14,24 @@
 
 using std::isnan;
 
-inline uint32_t millis() {
+// These return the full 64-bit count, NOT Arduino's uint32_t. MeshCore's
+// timer arithmetic (Dispatcher::millisHasNowPassed) compares deadlines with
+// (long)(getMillis() - timestamp) > 0, which tolerates wrap only when the
+// wrap width matches `unsigned long` - 32-bit on Arduino, 64-bit here.
+// Truncating to uint32_t while getMillis() returns a 64-bit unsigned long
+// breaks that at the wrap: the difference reads as a large negative, so no
+// scheduled deadline ever passes again and the node stays up but stops
+// transmitting for ~49.7 days. Full width keeps the same idiom exact.
+// Both are measured from the first call, so they start near zero like
+// Arduino's do rather than carrying the host's uptime.
+inline unsigned long micros() {
   struct timespec ts;
   clock_gettime(CLOCK_MONOTONIC, &ts);
-  return (uint32_t)(ts.tv_sec * 1000ULL + ts.tv_nsec / 1000000ULL);
+  unsigned long long now = ts.tv_sec * 1000000ULL + ts.tv_nsec / 1000ULL;
+  static const unsigned long long base = now;
+  return (unsigned long)(now - base);
 }
-inline uint32_t micros() {
-  struct timespec ts;
-  clock_gettime(CLOCK_MONOTONIC, &ts);
-  return (uint32_t)(ts.tv_sec * 1000000ULL + ts.tv_nsec / 1000ULL);
-}
+inline unsigned long millis() { return micros() / 1000ULL; }
 inline void delay(uint32_t ms) { usleep(ms * 1000); }
 inline void delayMicroseconds(uint32_t us) { usleep(us); }
 inline long random(long hi) { return hi > 0 ? ::random() % hi : 0; }
