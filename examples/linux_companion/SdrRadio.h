@@ -17,7 +17,7 @@ public:
     std::string rx_binary = "lora_rx", tx_binary = "lora_tx";
     std::string rx_device, rx_channels = "869618000", rx_sfs = "8";
     uint32_t bw = 62500, tx_freq = 869618000;
-    int rx_ppm = 0, tx_sf = 8, tx_cr = 1, tx_ppm = 0, tx_vga = 47;
+    int rx_ppm = 0, tx_sf = 7, tx_cr = 1, tx_ppm = 0, tx_vga = 47;
     bool rx_agc = true, tx_amp = true;
     double tx_duty = 10.0;
     // A LoRa chirp is constant-envelope, so full DAC scale cannot clip and
