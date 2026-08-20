@@ -55,13 +55,14 @@ int main(int argc, char* argv[]) {
     else if (!strcmp(argv[i], "--rx-channels") && i + 1 < argc) g_radio_cfg.rx_channels = argv[++i];
     else if (!strcmp(argv[i], "--rx-sfs") && i + 1 < argc) g_radio_cfg.rx_sfs = argv[++i];
     else if (!strcmp(argv[i], "--rx-ppm") && i + 1 < argc) g_radio_cfg.rx_ppm = atoi(argv[++i]);
+    else if (!strcmp(argv[i], "--rx-agc")) g_radio_cfg.rx_agc = true;   // -G -T: proven on the Blog V4, deaf on the UHIDIR
     else if (!strcmp(argv[i], "--tx-freq") && i + 1 < argc) g_radio_cfg.tx_freq = (uint32_t)atol(argv[++i]);
     else if (!strcmp(argv[i], "--rx-binary") && i + 1 < argc) g_radio_cfg.rx_binary = argv[++i];
     else if (!strcmp(argv[i], "--tx-binary") && i + 1 < argc) g_radio_cfg.tx_binary = argv[++i];
     else {
       fprintf(stderr,
         "Usage: %s [-p port] [-d data_dir] [--rx-device sub] [--rx-channels list]\n"
-        "          [--rx-sfs list] [--rx-ppm n] [--tx-freq hz]\n"
+        "          [--rx-sfs list] [--rx-ppm n] [--rx-agc] [--tx-freq hz]\n"
         "          [--rx-binary path] [--tx-binary path]\n", argv[0]);
       return 1;
     }
