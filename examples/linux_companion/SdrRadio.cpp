@@ -71,12 +71,14 @@ void SdrRadio::watchdogLoop() {
   while (_running) {
     for (int i = 0; i < 100 && _running; i++) usleep(100 * 1000);   // 10 s
     int limit;
-    { std::lock_guard<std::mutex> lk(_cfg_mtx); limit = _cfg.rx_watchdog_s; }
+    { std::lock_guard<std::mutex> lk(_cfg_mtx);
+      limit = _proven ? _cfg.rx_watchdog_s : _cfg.rx_probation_s; }
     if (limit <= 0) continue;
     time_t last = _last_rx;
     pid_t pid = _rx_pid;
     if (pid > 0 && last > 0 && time(nullptr) - last > limit) {
-      fprintf(stderr, "[sdr] no packet in %d s - restarting rx (deaf tuner?)\n", limit);
+      fprintf(stderr, "[sdr] no packet in %d s%s - restarting rx (deaf tuner?)\n",
+              limit, _proven ? "" : " (probation)");
       _last_rx = time(nullptr);   // one kill per silent interval, not one per tick
       kill(pid, SIGTERM);
     }
@@ -106,6 +108,7 @@ void SdrRadio::superviseLoop() {
     pid_t pid = spawn_pipe(rxArgv(), &fd);
     _rx_pid = pid;
     _last_rx = time(nullptr);   // the watchdog clock starts at spawn
+    _proven = false;            // every open re-rolls the tuner
     if (pid > 0) {
       _rx_fd = fd;
       readPipe(fd);
@@ -144,6 +147,7 @@ void SdrRadio::readPipe(int fd) {
         _rx.push_back(RxPacket{std::move(pkt), has_snr ? pending_snr : 0.0f});
         _n_recv++;
         _last_rx = time(nullptr);
+        _proven = true;
         if (_rx.size() > 256) _rx.pop_front();
         has_snr = false;   // each "rx ok" consumes the cfg line that preceded it
       }

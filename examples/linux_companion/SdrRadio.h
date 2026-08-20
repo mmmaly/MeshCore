@@ -35,6 +35,12 @@ public:
     // real silence this long does not happen; on a genuinely idle channel the
     // cost is a few seconds of downtime per interval. 0 disables.
     int rx_watchdog_s = 600;
+    // A deaf-from-birth child is the common case of the lottery, and a child
+    // that has decoded even once has a locked tuner, so silence is judged on
+    // two clocks: a short probation until the first decode, the full watchdog
+    // interval after it. Probation must still exceed the longest plausible
+    // gap between packets on a live channel.
+    int rx_probation_s = 90;
   };
 
   explicit SdrRadio(const Config& cfg) : _cfg(cfg) {}
@@ -100,5 +106,6 @@ private:
   std::atomic<pid_t> _rx_pid{-1};
   std::atomic<int> _rx_fd{-1};
   std::atomic<time_t> _last_rx{0};        // last decode, or last child spawn
+  std::atomic<bool> _proven{false};       // this child has decoded at least once
   std::thread _watchdog;
 };
