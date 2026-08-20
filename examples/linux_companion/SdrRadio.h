@@ -20,6 +20,10 @@ public:
     int rx_ppm = 0, tx_sf = 8, tx_cr = 1, tx_ppm = 0, tx_vga = 47;
     bool rx_agc = true, tx_amp = true;
     double tx_duty = 10.0;
+    // A LoRa chirp is constant-envelope, so full DAC scale cannot clip and
+    // costs nothing in signal quality: lora_tx defaults to 0.7 for callers
+    // who may not know that, but a node wants every dB. Worth +3.1 dB.
+    double tx_level = 1.0;
   };
 
   explicit SdrRadio(const Config& cfg) : _cfg(cfg) {}

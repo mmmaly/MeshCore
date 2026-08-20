@@ -124,7 +124,8 @@ bool SdrRadio::startSendRaw(const uint8_t* bytes, int len) {
     _cfg.tx_binary, "-f", std::to_string(_cfg.tx_freq),
     "-S", std::to_string(_cfg.tx_sf), "-b", std::to_string(_cfg.bw),
     "-c", std::to_string(_cfg.tx_cr), "-p", std::to_string(_cfg.tx_ppm),
-    "-g", std::to_string(_cfg.tx_vga), "-y", std::to_string(_cfg.tx_duty)};
+    "-g", std::to_string(_cfg.tx_vga), "-y", std::to_string(_cfg.tx_duty),
+    "-L", std::to_string(_cfg.tx_level)};
   if (_cfg.tx_amp) argv.push_back("-a");
   argv.push_back("-x"); argv.push_back(hex);
   pid_t pid = fork();
