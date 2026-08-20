@@ -28,6 +28,8 @@ public:
 
 private:
   void acceptLoop();
+  void consume(const uint8_t* data, size_t n);   // feed the frame parser
+  void dropClient(int fd);                       // shutdown; accept thread closes
   int _port;
   int _srv = -1;
   std::atomic<int> _client{-1};
