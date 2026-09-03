@@ -91,3 +91,28 @@ Switchless RF path, 32 MHz crystal (TCXO mode is not enabled). The HAL and
 the chip quirks (standby before re-arming RX, re-asserting the 255-byte RX
 length after a transmit) follow MeshCore's `CustomLR2021` driver and the
 XIAO nRF54L15 companion port proposed in meshcore-dev/MeshCore#2944.
+
+## PA table: measured
+
+Two kits 50 cm apart, monitor on the same channel with boosted gain off,
+`tools/txtest.py` stepping the transmitter's requested power (4 tagged
+packets per step, monitor RSSI in dBm, ±0.5 dB spread). Same geometry for
+both firmware builds (`-DLR2021_STOCK_PA_TABLE=ON` selects RadioLib's table):
+
+| requested | RadioLib stock table | Semtech Wio-LR2021 table |
+|---|---|---|
+| −9 dBm | −54.5 | −60.5 |
+| 0 | −48.5 | −50.5 |
+| 5 | −43.8 | −46.0 |
+| 10 | −38.5 | −41.5 |
+| 14 | −35.5 | −36.5 |
+| 18 | −34.5 | −32.5 |
+| 20 | −34.0 | −30.8 |
+| 22 | −33.5 | −28.5 |
+
+RadioLib's table (tuned for minimum current) flattens above 14 dBm — the
+last 8 dB requested buy 2 dB on air; Semtech's keeps 1 dB/dB to the top and
+is 5 dB stronger at 22 dBm. On the mesh that was the difference between a
+node nobody heard (three flood adverts at 20 dBm, zero observer copies on
+analyzer.meshcore.cz) and one heard by 53 observer copies on the next advert.
+Absolute levels are relative to this geometry, not calibrated.

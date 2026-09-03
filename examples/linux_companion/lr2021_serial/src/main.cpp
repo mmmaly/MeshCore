@@ -324,7 +324,9 @@ int main(void) {
   }
 
   radio.irqDioNum = LR2021_IRQ_DIO;
+#ifndef LR2021_STOCK_PA_TABLE               // -DLR2021_STOCK_PA_TABLE builds the comparison firmware
   radio.setPaTable(wio_pa_lf, false);   // before begin(): setOutputPower() reads it
+#endif
   int16_t st = RADIOLIB_ERR_NONE;
   for (int attempt = 0; attempt < 5; attempt++) {
     // tcxoVoltage 0: the Wio-LR2021 runs on a 32 MHz crystal, skip SetTcxoMode.

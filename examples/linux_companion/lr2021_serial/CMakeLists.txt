@@ -28,4 +28,8 @@ target_include_directories(app PRIVATE src ${RADIOLIB_SRC})
 # length after a transmit (the chip keeps the last TX length otherwise and
 # clips longer incoming packets - found during MeshCore's LR2021 bring-up).
 target_compile_definitions(app PRIVATE RADIOLIB_GODMODE=1 RADIOLIB_LOW_LEVEL=1)
+option(LR2021_STOCK_PA_TABLE "Use RadioLib's built-in PA table instead of Semtech's Wio-LR2021 one (for A/B tests)" OFF)
+if(LR2021_STOCK_PA_TABLE)
+  target_compile_definitions(app PRIVATE LR2021_STOCK_PA_TABLE=1)
+endif()
 target_compile_options(app PRIVATE -Wno-unused-parameter)
