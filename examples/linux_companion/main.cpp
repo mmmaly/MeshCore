@@ -7,6 +7,8 @@
 #include <helpers/ArduinoHelpers.h>
 #include <helpers/SimpleMeshTables.h>
 #include "host/target.h"
+#include "SdrRadio.h"
+#include "SerialRadio.h"
 #include "MyMesh.h"
 #include "TcpSerialInterface.h"
 
@@ -20,7 +22,9 @@
 LinuxBoard board;
 LinuxRTCClock rtc_clock;
 SensorManager sensors;
-SdrRadio radio_driver;
+static SdrRadio g_sdr_radio;        // RTL-SDR rx + HackRF tx (default)
+static SerialRadio g_serial_radio;  // LR2021 EVK on a serial port (--serial)
+RadioProxy radio_driver;
 
 mesh::LocalIdentity radio_new_identity() {
   LinuxRNG rng;
@@ -47,7 +51,9 @@ static void on_signal(int) {
 int main(int argc, char* argv[]) {
   int port = 5000;
   std::string data_dir = ".";
-  SdrRadio::Config& g_radio_cfg = radio_driver.config();
+  SdrRadio::Config& g_radio_cfg = g_sdr_radio.config();
+  SerialRadio::Config& g_serial_cfg = g_serial_radio.config();
+  bool use_serial = false;
   for (int i = 1; i < argc; i++) {
     if (!strcmp(argv[i], "-p") && i + 1 < argc) port = atoi(argv[++i]);
     else if (!strcmp(argv[i], "-d") && i + 1 < argc) data_dir = argv[++i];
@@ -55,17 +61,26 @@ int main(int argc, char* argv[]) {
     else if (!strcmp(argv[i], "--rx-channels") && i + 1 < argc) g_radio_cfg.rx_channels = argv[++i];
     else if (!strcmp(argv[i], "--rx-sfs") && i + 1 < argc) g_radio_cfg.rx_sfs = argv[++i];
     else if (!strcmp(argv[i], "--rx-ppm") && i + 1 < argc) g_radio_cfg.rx_ppm = atoi(argv[++i]);
+    else if (!strcmp(argv[i], "--rx-agc")) g_radio_cfg.rx_agc = true;
     else if (!strcmp(argv[i], "--tx-freq") && i + 1 < argc) g_radio_cfg.tx_freq = (uint32_t)atol(argv[++i]);
     else if (!strcmp(argv[i], "--rx-binary") && i + 1 < argc) g_radio_cfg.rx_binary = argv[++i];
     else if (!strcmp(argv[i], "--tx-binary") && i + 1 < argc) g_radio_cfg.tx_binary = argv[++i];
+    else if (!strcmp(argv[i], "--serial") && i + 1 < argc) { use_serial = true; g_serial_cfg.device = argv[++i]; }
+    else if (!strcmp(argv[i], "--serial-baud") && i + 1 < argc) g_serial_cfg.baud = atoi(argv[++i]);
+    else if (!strcmp(argv[i], "--side-sfs") && i + 1 < argc) g_serial_cfg.side_sfs = argv[++i];
+    else if (!strcmp(argv[i], "--tx-power") && i + 1 < argc) g_serial_cfg.tx_power = atoi(argv[++i]);
+    else if (!strcmp(argv[i], "--rx-boost") && i + 1 < argc) g_serial_cfg.rx_boost = atoi(argv[++i]);
     else {
       fprintf(stderr,
-        "Usage: %s [-p port] [-d data_dir] [--rx-device sub] [--rx-channels list]\n"
-        "          [--rx-sfs list] [--rx-ppm n] [--tx-freq hz]\n"
-        "          [--rx-binary path] [--tx-binary path]\n", argv[0]);
+        "Usage: %s [-p port] [-d data_dir]\n"
+        "  SDR radios (default):  [--rx-device sub] [--rx-channels list] [--rx-sfs list]\n"
+        "                         [--rx-ppm n] [--rx-agc] [--tx-freq hz] [--rx-binary path] [--tx-binary path]\n"
+        "  LR2021 EVK (lr2021_serial firmware): --serial /dev/ttyACM0 [--serial-baud n]\n"
+        "                         [--side-sfs 8,9] [--tx-power dbm] [--rx-boost 0..7]\n", argv[0]);
       return 1;
     }
   }
+  radio_driver.select(use_serial ? (HostRadio*)&g_serial_radio : (HostRadio*)&g_sdr_radio);
 
   signal(SIGINT, on_signal);
   signal(SIGTERM, on_signal);

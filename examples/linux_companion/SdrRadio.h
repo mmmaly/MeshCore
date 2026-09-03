@@ -1,5 +1,5 @@
 #pragma once
-#include <Dispatcher.h>       // mesh::Radio
+#include "HostRadio.h"
 #include <deque>
 #include <mutex>
 #include <string>
@@ -11,7 +11,7 @@
 // lora_rx, a HackRF transmitting through lora_tx. This is the whole point of
 // the port - it slots in exactly where a CustomSX1262Wrapper would, so all
 // of MyMesh.cpp / BaseChatMesh.cpp / Mesh.cpp run unmodified above it.
-class SdrRadio : public mesh::Radio {
+class SdrRadio : public HostRadio {
 public:
   struct Config {
     std::string rx_binary = "lora_rx", tx_binary = "lora_tx";
@@ -52,15 +52,15 @@ public:
   // transmitter is immediate; the receiver is restarted so lora_rx picks up
   // the new frequency/SF (an SDR can watch several at once, so the new
   // channel is added rather than replacing the list).
-  void setParams(float freq_mhz, float bw_khz, uint8_t sf, uint8_t cr);
-  void setTxPower(uint8_t dbm);
-  void setRxBoostedGainMode(bool state);
-  bool getRxBoostedGainMode() const;
+  void setParams(float freq_mhz, float bw_khz, uint8_t sf, uint8_t cr) override;
+  void setTxPower(uint8_t dbm) override;
+  void setRxBoostedGainMode(bool state) override;
+  bool getRxBoostedGainMode() const override;
 
   // Counters the companion's radio stats report
-  uint32_t getPacketsRecv() const { return _n_recv; }
-  uint32_t getPacketsSent() const { return _n_sent; }
-  uint32_t getPacketsRecvErrors() const { return 0; }  // lora_rx only emits CRC-valid frames
+  uint32_t getPacketsRecv() const override { return _n_recv; }
+  uint32_t getPacketsSent() const override { return _n_sent; }
+  uint32_t getPacketsRecvErrors() const override { return 0; }  // lora_rx only emits CRC-valid frames
   float getLastRSSI() const override { return -105.0f + _last_snr; }
 
 private:

@@ -4,10 +4,10 @@
 // companion sources expect to exist.
 #include <helpers/SensorManager.h>
 #include "../LinuxPlatform.h"
-#include "../SdrRadio.h"
+#include "../HostRadio.h"
 
 extern LinuxBoard board;
-extern SdrRadio radio_driver;
+extern RadioProxy radio_driver;   // SdrRadio or SerialRadio, chosen in main()
 extern LinuxRTCClock rtc_clock;
 extern SensorManager sensors;   // base class: every query is a no-op
 

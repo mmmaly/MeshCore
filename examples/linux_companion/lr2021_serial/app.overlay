@@ -1,0 +1,23 @@
+/*
+ * Wio-LR2021 on the XIAO nRF54L15 (Semtech LR2021 EVK). Pin map from Semtech's
+ * usp_zephyr shield (semtech_wio_lr20xx_common.dtsi) and the MeshCore
+ * xiao_nrf54l15 variant:
+ *   SPI   spi00 (xiao_spi): SCK = P2.01 (D8), MOSI = P2.02 (D10), MISO = P2.04 (D9)
+ *   NSS   P1.07 (D3)   IRQ = LR2021 DIO8 -> P1.04 (D0)
+ *   RESET P1.06 (D2)   BUSY = P1.05 (D1)
+ * The module is switchless (no RF-switch DIOs) and runs on a 32 MHz crystal.
+ * RadioLib toggles NSS itself, so the SPI controller is used without a HW CS.
+ * Console = uart20 -> the SAMD11 debug bridge -> USB CDC on the host.
+ */
+&spi00 {
+	status = "okay";
+};
+
+/ {
+	zephyr,user {
+		nss-gpios   = <&gpio1 7 0>;
+		irq-gpios   = <&gpio1 4 0>;
+		reset-gpios = <&gpio1 6 0>;
+		busy-gpios  = <&gpio1 5 0>;
+	};
+};
