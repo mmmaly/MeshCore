@@ -201,6 +201,7 @@ bool SerialRadio::startSendRaw(const uint8_t* bytes, int len) {
   for (int i = 0; i < len; i++) { snprintf(hx, sizeof(hx), "%02x", bytes[i]); line += hx; }
   std::unique_lock<std::mutex> lk(_tx_mtx);
   _tx_result = 0;
+  fprintf(stderr, "%s\n", line.c_str());   // packet log, outbound side
   if (!sendLine(line)) return false;
   auto limit = std::chrono::milliseconds(getEstAirtimeFor(len) * 2 + 3000);
   bool ok = _tx_cv.wait_for(lk, limit, [&] { return _tx_result != 0; }) && _tx_result == 1;

@@ -46,6 +46,22 @@ static ZephyrHal hal;
 static Module mod(&hal, LR_PIN_NSS, LR_PIN_IRQ, LR_PIN_RESET, LR_PIN_BUSY);
 static LR2021 radio(&mod);
 
+// Sub-GHz PA settings measured by Semtech on this module (usp_zephyr,
+// semtech_wio_lr20xx_common.dtsi "tx-power-cfg-lf", meas @902 MHz), indexed
+// by requested dBm + 9 as RadioLib expects. RadioLib's built-in table is
+// tuned for minimum current and programs the PA several dB softer at the top
+// (+22 dBm: tx_power 35 vs 44 here). Fields: {duty cycle, slices, tx_power}.
+static LR2021PaTableEntry_t wio_pa_lf[32] = {
+  {2, 5, -13}, {6, 1, -13}, {6, 0, -6}, {1, 0, 4},   // -9 .. -6 dBm
+  {2, 0, 4},   {1, 3, 2},   {0, 0, 14}, {0, 3, 9},   // -5 .. -2
+  {3, 0, 11},  {1, 0, 16},  {7, 0, 11}, {2, 0, 18},  // -1 .. 2
+  {5, 0, 16},  {7, 0, 17},  {1, 2, 21}, {3, 0, 25},  // 3 .. 6
+  {0, 1, 32},  {2, 0, 32},  {3, 1, 27}, {2, 1, 32},  // 7 .. 10
+  {5, 1, 28},  {5, 1, 30},  {4, 1, 34}, {5, 4, 31},  // 11 .. 14
+  {4, 4, 34},  {5, 6, 34},  {3, 5, 39}, {6, 6, 37},  // 15 .. 18
+  {5, 5, 40},  {7, 4, 41},  {7, 4, 43}, {7, 7, 44},  // 19 .. 22
+};
+
 struct Config {
   uint32_t freq_hz = 869432000;   // MeshCore CZ community preset
   uint8_t  sf = 7;
@@ -308,6 +324,7 @@ int main(void) {
   }
 
   radio.irqDioNum = LR2021_IRQ_DIO;
+  radio.setPaTable(wio_pa_lf, false);   // before begin(): setOutputPower() reads it
   int16_t st = RADIOLIB_ERR_NONE;
   for (int attempt = 0; attempt < 5; attempt++) {
     // tcxoVoltage 0: the Wio-LR2021 runs on a 32 MHz crystal, skip SetTcxoMode.
