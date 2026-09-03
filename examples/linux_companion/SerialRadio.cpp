@@ -112,7 +112,9 @@ void SerialRadio::handleLine(char* line) {
     p = strstr(line, "rssi=");
     pending_rssi = p ? strtof(p + 5, nullptr) : -120.0f;
     has_cfg = true;
+    fprintf(stderr, "%s\n", line);      // packet log: the same lines lora_rx prints, so
   } else if (!strncmp(line, "rx ok: ", 7)) {
+    fprintf(stderr, "%s\n", line);      // the decoder's `stream` command can replay lc.log
     std::vector<uint8_t> pkt;
     for (const char* h = line + 7; h[0] && h[1]; h += 2) {
       auto hex = [](char c) { return c <= '9' ? c - '0' : (c | 32) - 'a' + 10; };
