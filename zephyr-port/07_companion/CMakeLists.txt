@@ -51,7 +51,7 @@ target_include_directories(app PRIVATE
   ${RADIOLIB} ${CRYPTO} ${BASE64} ${ED25519})
 
 target_compile_definitions(app PRIVATE
-  NRF54_PLATFORM=1 RADIOLIB_GODMODE=1 MAX_GROUP_CHANNELS=8 MAX_CONTACTS=100 BLE_PIN_CODE=123456
+  NRF54_PLATFORM=1 MESH_DEBUG=1 RADIOLIB_GODMODE=1 MAX_GROUP_CHANNELS=8 MAX_CONTACTS=100 BLE_PIN_CODE=123456
   LFS_NO_ASSERT   # mount-fail (e.g. stale/repartitioned region) -> graceful format, not abort()
   # App TX-power slider max + firmware input check. Pin to the LR2021's absolute (sub-GHz LF)
   # PA ceiling of 22 dBm, INDEPENDENT of the band/boot default, so a 2.4 GHz build still allows
@@ -75,5 +75,5 @@ if(MC_BAND_2G4)
   message(STATUS "MeshCore: building for 2.4 GHz band (2450 MHz / 500 kHz / SF8 / CR5)")
 else()
   target_compile_definitions(app PRIVATE
-    LORA_FREQ=869.618f LORA_BW=62.5f LORA_SF=8 LORA_CR=5 LORA_TX_POWER=22)
+    LORA_FREQ=869.432f LORA_BW=62.5f LORA_SF=7 LORA_CR=5 LORA_TX_POWER=22)
 endif()

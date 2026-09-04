@@ -15,6 +15,18 @@ ZBoard board;   /* defined before the radio wrapper that references it */
 
 static CustomLR2021Wrapper s_radio(s_lora, board);
 
+/* Sub-GHz PA settings Semtech measured on the Wio-LR2021 (usp_zephyr shield dtsi,
+ * tx-power-cfg-lf), indexed by dBm+9 as RadioLib expects. RadioLib's built-in
+ * table flattens above +14 dBm on this module and is 5 dB down at +22 (measured
+ * with a second kit as monitor); Semtech's keeps 1 dB/dB to the top. */
+static LR2021PaTableEntry_t wio_pa_lf[32] = {
+  {2, 5, -13}, {6, 1, -13}, {6, 0, -6}, {1, 0, 4},   {2, 0, 4},   {1, 3, 2},   {0, 0, 14}, {0, 3, 9},
+  {3, 0, 11},  {1, 0, 16},  {7, 0, 11}, {2, 0, 18},  {5, 0, 16},  {7, 0, 17},  {1, 2, 21}, {3, 0, 25},
+  {0, 1, 32},  {2, 0, 32},  {3, 1, 27}, {2, 1, 32},  {5, 1, 28},  {5, 1, 30},  {4, 1, 34}, {5, 4, 31},
+  {4, 4, 34},  {5, 6, 34},  {3, 5, 39}, {6, 6, 37},  {5, 5, 40},  {7, 4, 41},  {7, 4, 43}, {7, 7, 44},
+};
+
+
 RadioLibWrapper &radio_driver = s_radio;
 VolatileRTCClock rtc_clock;
 SensorManager    sensors;
@@ -73,6 +85,7 @@ static bool radio_bringup(float freq, float bw, uint8_t sf, uint8_t cr)
 bool radio_init()
 {
 	s_lora.setIrqDio(LR2021_IRQ_DIO);
+	s_lora.setPaTable(wio_pa_lf, false);   /* before begin(): setOutputPower() reads it */
 	s_freq = LORA_FREQ;
 	s_req_dbm = LORA_TX_POWER;
 	if (!radio_bringup(LORA_FREQ, LORA_BW, LORA_SF, LORA_CR)) return false;

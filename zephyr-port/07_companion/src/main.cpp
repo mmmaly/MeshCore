@@ -40,7 +40,11 @@ int main(void)
 
 	char name[48];
 	snprintf(name, sizeof(name), "%s%s", BLE_NAME_PREFIX, the_mesh.getNodePrefs()->node_name);
+#ifndef MC_NO_BLE
 	ble.begin(name, the_mesh.getBLEPin());
+#else
+	printk("BLE stack not started (MC_NO_BLE RF interference test build)\n");
+#endif
 	the_mesh.startInterface(ble);
 	printk("companion up: '%s' pin %lu — connect from the MeshCore app\n",
 	       name, (unsigned long)the_mesh.getBLEPin());
