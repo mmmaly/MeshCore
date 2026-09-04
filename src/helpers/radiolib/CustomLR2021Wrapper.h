@@ -24,6 +24,9 @@ public:
     r->setRxBoostedGainMode(r->getRxBoostLevel());
     r->setOutputPower(r->lastPowerDbm());
     updatePreamble(sf);
+    // The setters above are SPI commands: in duty-cycled RX they wake the chip and end
+    // the cycle, leaving it in standby while our state still says RX. Re-arm.
+    RadioLibWrapper::idle();
   }
 
   bool isReceivingPacket() override {
