@@ -44,7 +44,18 @@
 
 static ZephyrHal hal;
 static Module mod(&hal, LR_PIN_NSS, LR_PIN_IRQ, LR_PIN_RESET, LR_PIN_BUSY);
-static LR2021 radio(&mod);
+// RadioLib keeps the LoRa modulation codes it last programmed in protected
+// members; the RTToF setup needs them to re-program the same modulation under
+// the ranging packet type.
+class Lr2021Radio : public LR2021 {
+public:
+  using LR2021::LR2021;
+  uint8_t sfCode() const { return spreadingFactor; }
+  uint8_t bwCode() const { return bandwidth; }
+  uint8_t crCode() const { return codingRate; }
+  uint8_t ldroCode() const { return ldrOptimize; }
+};
+static Lr2021Radio radio(&mod);
 
 // Sub-GHz PA settings measured by Semtech on this module (usp_zephyr,
 // semtech_wio_lr20xx_common.dtsi "tx-power-cfg-lf", meas @902 MHz), indexed
@@ -202,10 +213,126 @@ static int16_t apply_config() {
   return arm_rx();
 }
 
+
+/* ---------- RTToF ranging (LoRa Plus "time of flight") ----------
+ * Sequence and calibration mirror Semtech's USP ranging demo (smtc_rac_lora.c,
+ * app_ranging_hopping.c): packet type RTToF, LoRa modulation params, the PLL
+ * frequency-step register workaround, the per-BW/SF Tx->Rx delay indicator,
+ * then the manager sends a request (SetTx) and the subordinate answers from
+ * continuous RX. Distance [m] = raw * 150 / (4096 * BW_MHz).
+ */
+static const uint32_t rng_delay_below_600m[7][8] = {
+  {19737,19694,19614,19457,19159,18632,19036,19024}, {17502,17546,17566,17682,17739,18042,19036,19024},
+  {20134,20111,20068,19981,19811,19489,20236,20232}, {17794,17827,17831,17871,17819,17826,20295,20298},
+  {20569,20579,20577,20549,20491,20372,20295,20298}, {18713,18778,18746,18805,18725,18786,20295,20298},
+  {21629,21660,21685,21660,21597,21466,20295,20298},
+};
+static const uint32_t rng_delay_600m_2g[7][8] = {
+  {19747,19707,19628,19480,19166,18589,19036,19024}, {17498,17502,17515,17606,17722,18024,19036,19024},
+  {20150,20133,20102,20033,19847,19537,20236,20232}, {17768,17791,17868,17997,18123,18456,20295,20298},
+  {20599,20590,20567,20512,20295,19961,20295,20298}, {18681,18738,18763,18874,18737,18824,20295,20298},
+  {21700,21705,21783,21834,21689,21571,20295,20298},
+};
+static const uint32_t rng_delay_above_2g[7][8] = {
+  {19582,19498,19330,19012,18368,17125,19036,19024}, {17173,17262,17335,17554,17828,18557,19036,19024},
+  {19938,19896,19818,19646,19316,18667,20236,20232}, {17767,17822,17869,17937,18119,18442,20295,20298},
+  {20588,20586,20550,20451,20287,19938,20295,20298}, {18698,18777,18848,18981,19047,19449,20295,20298},
+  {21574,21611,21622,20095,21370,21009,20295,20298},
+};
+static int rng_bw_row(uint32_t bw) {
+  switch (bw) { case 125000: return 0; case 203125: return 1; case 250000: return 2; case 406250: return 3;
+                case 500000: return 4; case 812500: return 5; case 1000000: return 6; default: return -1; }
+}
+static bool rng_mode = false;        // radio is in RTToF packet type (LoRa RX suspended)
+static bool rng_subordinate = false;
+static uint32_t rng_user_delay = 0;  // 0 = Semtech's table value
+static uint32_t rng_addr = 0x32101222;
+
+static uint32_t rng_delay_indicator() {
+  if (rng_user_delay) return rng_user_delay;
+  int row = rng_bw_row(cfg.bw_hz); int col = cfg.sf - 5;
+  if (row < 0 || col < 0 || col > 7) return 0;
+  if (cfg.freq_hz < 600000000u) return rng_delay_below_600m[row][col];
+  if (cfg.freq_hz < 2000000000u) return rng_delay_600m_2g[row][col];
+  return rng_delay_above_2g[row][col];
+}
+
+// Common part of Semtech's manager/subordinate setup; the LoRa modulation
+// codes come from RadioLib's cache filled by apply_config() (LoRa mode).
+static int16_t rng_setup(bool subordinate, uint32_t addr) {
+  if (rng_bw_row(cfg.bw_hz) < 0) { printk("err rng: bandwidth %u not supported for ranging (125k..1M)\n", cfg.bw_hz); return -1; }
+  radio.standby();
+  int16_t st = radio.setPacketType(RADIOLIB_LR2021_PACKET_TYPE_RTTOF);
+  if (st == RADIOLIB_ERR_NONE) st = radio.setLoRaModulationParams(radio.sfCode(), radio.bwCode(), radio.crCode(), radio.ldroCode());
+  if (st == RADIOLIB_ERR_NONE) {          // workaround: truncate the PLL frequency step (reg 0x00F40144 &= ~0x7F)
+    uint32_t v = 0; st = radio.readRegMem32(0x00F40144, &v, 1);
+    if (st == RADIOLIB_ERR_NONE) { v &= ~0x7Fu; st = radio.writeRegMem32(0x00F40144, &v, 1); }
+  }
+  if (st == RADIOLIB_ERR_NONE && !subordinate) st = set_output_power(cfg.pwr);
+  if (st == RADIOLIB_ERR_NONE) st = radio.setLoRaPacketParams(12, RADIOLIB_LRXXXX_LORA_HEADER_EXPLICIT, 7, RADIOLIB_LRXXXX_LORA_CRC_ENABLED, 0);
+  if (st == RADIOLIB_ERR_NONE) st = radio.setLoRaSyncword(cfg.sync);
+  uint32_t irq = subordinate ? (RADIOLIB_LR2021_IRQ_TIMEOUT | RADIOLIB_LR2021_IRQ_RNG_REQ_DIS | RADIOLIB_LR2021_IRQ_RNG_RESP_DONE | RADIOLIB_LR2021_IRQ_RNG_REQ_VALID)
+                             : (RADIOLIB_LR2021_IRQ_RNG_EXCH_VALID | RADIOLIB_LR2021_IRQ_RNG_TIMEOUT | RADIOLIB_LR2021_IRQ_TIMEOUT);
+  if (st == RADIOLIB_ERR_NONE) st = radio.setDioIrqConfig(LR2021_IRQ_DIO, irq);
+  if (st == RADIOLIB_ERR_NONE) st = radio.setRangingTxRxDelay(rng_delay_indicator());
+  if (st == RADIOLIB_ERR_NONE) st = radio.setRangingParams(false, 15);   // 15 response symbols (Semtech default)
+  if (st == RADIOLIB_ERR_NONE) st = subordinate ? radio.setRangingAddr(addr, 4) : radio.setRangingReqAddr(addr);
+  if (st == RADIOLIB_ERR_NONE) st = radio.clearIrqState(RADIOLIB_LR2021_IRQ_ALL);
+  if (st != RADIOLIB_ERR_NONE) { printk("err rng setup %d\n", st); return st; }
+  rng_mode = true; rng_subordinate = subordinate; rng_addr = addr;
+  return st;
+}
+
+static int16_t rng_arm_subordinate() {
+  radio.clearIrqState(RADIOLIB_LR2021_IRQ_ALL);
+  return radio.setRx(RADIOLIB_LR2021_RX_TIMEOUT_INF);
+}
+
+static void rng_off() {
+  rng_mode = false; rng_subordinate = false;
+  radio.standby();
+  radio.setPacketType(RADIOLIB_LR2021_PACKET_TYPE_LORA);
+  apply_config();
+}
+
+// One manager exchange: returns true and fills raw/rssi on a valid response.
+static bool rng_exchange(int32_t* raw, uint8_t* rssi, uint32_t* irq_out) {
+  static const uint8_t payload[7] = {0x52, 0x4e, 0x47, 0x00, 0x00, 0x00, 0x00};
+  radio.standby();
+  radio.clearIrqState(RADIOLIB_LR2021_IRQ_ALL);
+  radio.writeRadioTxFifo(payload, sizeof(payload));
+  int16_t st = radio.setTx(0);
+  if (st != RADIOLIB_ERR_NONE) { printk("err rng setTx %d\n", st); return false; }
+  int64_t t0 = k_uptime_get();
+  uint32_t irq = 0;
+  while (k_uptime_get() - t0 < 1500) {
+    irq = radio.getIrqFlags();
+    if (irq & (RADIOLIB_LR2021_IRQ_RNG_EXCH_VALID | RADIOLIB_LR2021_IRQ_RNG_TIMEOUT | RADIOLIB_LR2021_IRQ_TIMEOUT)) break;
+    k_msleep(1);
+  }
+  *irq_out = irq;
+  if (!(irq & RADIOLIB_LR2021_IRQ_RNG_EXCH_VALID)) { radio.clearIrqState(RADIOLIB_LR2021_IRQ_ALL); return false; }
+  uint32_t r1 = 0, r2 = 0; uint8_t rs = 0;
+  radio.getRangingResult(RADIOLIB_LR2021_RANGING_RESULT_TYPE_RAW, &r1, &rs, &r2);
+  radio.clearIrqState(RADIOLIB_LR2021_IRQ_ALL);
+  int32_t v = (int32_t)r1; if (v >= (1 << 23)) v -= (1 << 24);   // signed 24-bit
+  *raw = v; *rssi = rs;
+  return true;
+}
+
+static float rng_metres(int32_t raw) { return (float)raw * 150.0f / (4096.0f * (cfg.bw_hz / 1000000.0f)); }
+
 /* ---------- radio service: called on IRQ edge and as a periodic poll ---------- */
 static void service_radio() {
   uint32_t irq = radio.getIrqFlags();
   if (!irq) return;
+  if (rng_mode) {
+    if (rng_subordinate && (irq & (RADIOLIB_LR2021_IRQ_RNG_RESP_DONE | RADIOLIB_LR2021_IRQ_RNG_REQ_DIS | RADIOLIB_LR2021_IRQ_TIMEOUT))) {
+      printk("rng sub: irq=%08x %s\n", irq, (irq & RADIOLIB_LR2021_IRQ_RNG_RESP_DONE) ? "response sent" : "request discarded/timeout");
+      rng_arm_subordinate();
+    }
+    return;                 // manager exchanges are driven synchronously from the command
+  }
 
   if (irq & RADIOLIB_LR2021_IRQ_RX_DONE) {
     uint8_t cr = 0, det = 0, plen = 0; bool crc = false;
@@ -352,6 +479,52 @@ static void handle_line(char* line) {
            n_rx, n_rx_err, n_tx, n_tx_err, last_rx_ms, k_uptime_get(), maj, min, radio.getIrqFlags());
     return;
   }
+  if (!strncmp(line, "rng", 3)) {
+    // rng sub [addr]          become a ranging subordinate (until "rng off")
+    // rng req [addr] [count]  manager: run <count> exchanges with subordinate <addr>
+    // rng delay <n>           override the Tx->Rx delay indicator (0 = Semtech table)
+    // rng off                 back to LoRa
+    char* tok = strtok(line + 3, " ");
+    if (!tok) { printk("err rng: sub|req|delay|off\n"); return; }
+    if (!strcmp(tok, "off")) { rng_off(); printk("ok rng off\n"); return; }
+    if (!strcmp(tok, "delay")) { char* v = strtok(nullptr, " "); rng_user_delay = v ? strtoul(v, nullptr, 10) : 0; printk("ok rng delay=%u (table %u)\n", rng_user_delay, rng_delay_indicator()); return; }
+    if (!strcmp(tok, "sub")) {
+      char* a = strtok(nullptr, " "); uint32_t addr = a ? strtoul(a, nullptr, 16) : rng_addr;
+      if (rng_setup(true, addr) != RADIOLIB_ERR_NONE) return;
+      int16_t st = rng_arm_subordinate();
+      printk("%s rng sub addr=%08x freq=%u bw=%u sf=%u delay=%u\n", st == RADIOLIB_ERR_NONE ? "ok" : "err", addr, cfg.freq_hz, cfg.bw_hz, cfg.sf, rng_delay_indicator());
+      return;
+    }
+    if (!strcmp(tok, "req")) {
+      char* a = strtok(nullptr, " "); uint32_t addr = a ? strtoul(a, nullptr, 16) : rng_addr;
+      char* c = strtok(nullptr, " "); int count = c ? atoi(c) : 10; if (count < 1) count = 1; if (count > 200) count = 200;
+      if (rng_setup(false, addr) != RADIOLIB_ERR_NONE) return;
+      printk("ok rng req addr=%08x freq=%u bw=%u sf=%u delay=%u count=%d\n", addr, cfg.freq_hz, cfg.bw_hz, cfg.sf, rng_delay_indicator(), count);
+      static int32_t results[200]; int n = 0, timeouts = 0;
+      for (int i = 0; i < count; i++) {
+        int32_t raw = 0; uint8_t rssi = 0; uint32_t irq = 0;
+        if (rng_exchange(&raw, &rssi, &irq)) {
+          results[n++] = raw;
+          printk("rng result: raw=%d dist=%.2f m rssi=%u\n", raw, (double)rng_metres(raw), rssi);
+        } else {
+          timeouts++;
+          printk("rng result: no response (irq=%08x)\n", irq);
+        }
+        k_msleep(50);
+      }
+      if (n) {  // median
+        for (int i = 1; i < n; i++) { int32_t v = results[i]; int j = i - 1; while (j >= 0 && results[j] > v) { results[j + 1] = results[j]; j--; } results[j + 1] = v; }
+        int32_t med = results[n / 2];
+        printk("rng summary: %d/%d valid, median raw=%d dist=%.2f m, min %.2f max %.2f\n", n, count, med, (double)rng_metres(med), (double)rng_metres(results[0]), (double)rng_metres(results[n - 1]));
+      } else {
+        printk("rng summary: 0/%d valid\n", count);
+      }
+      rng_off();
+      return;
+    }
+    printk("err rng: unknown '%s'\n", tok);
+    return;
+  }
   if (!strncmp(line, "pa ", 3)) {   // raw SetPaConfig probe: pa <sel> <lfmode> <lfduty> <slices> <hfduty> [txpower]
     int a[6] = {0, 0, 6, 7, 16, 0}; int n = 0;
     for (char* t = strtok(line + 3, " "); t && n < 6; t = strtok(nullptr, " ")) a[n++] = atoi(t);
@@ -366,7 +539,7 @@ static void handle_line(char* line) {
   if (!strcmp(line, "rearm")) { printk("%s\n", arm_rx() == RADIOLIB_ERR_NONE ? "ok" : "err rearm"); return; }
   if (!strcmp(line, "reset")) { printk("ok rebooting\n"); k_msleep(50); sys_reboot(SYS_REBOOT_COLD); }
   if (!strcmp(line, "help") || !strcmp(line, "?")) {
-    printk("ok commands: tx <hex> | set freq= sf= bw= cr= sd=<sf,..|none> pwr= boost= sync= pre= | status | rearm | reset\n");
+    printk("ok commands: tx <hex> | set freq= sf= bw= cr= sd=<sf,..|none> pwr= boost= sync= pre= | rng sub|req|delay|off | status | rearm | reset\n");
     return;
   }
   printk("err unknown command '%s'\n", line);
@@ -405,6 +578,17 @@ int main(void) {
   radio.getVersion(&maj, &min);
   printk("%s %s ready chip=%u.%u\n", FW_NAME, FW_VERSION, maj, min);
   print_cfg("");
+#ifdef RNG_SUB_AT_BOOT
+  // Bench build: come up as a ranging subordinate on 2450 MHz / 500 kHz / SF8 so
+  // the board only needs USB power, not a host (the kit is moved around for tests).
+  cfg.freq_hz = 2450000000u; cfg.bw_hz = 500000; cfg.sf = 8; cfg.cr = 5; cfg.nside = 0; cfg.pwr = 10;
+  apply_config();
+  rng_user_delay = RNG_SUB_AT_BOOT;
+  if (rng_setup(true, rng_addr) == RADIOLIB_ERR_NONE) {
+    rng_arm_subordinate();
+    printk("ok rng sub at boot addr=%08x delay=%u\n", rng_addr, rng_delay_indicator());
+  }
+#endif
 
   static char line[1200];
   size_t pos = 0;
