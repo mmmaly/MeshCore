@@ -27,7 +27,21 @@ public:
   }
 
   bool isReceivingPacket() override {
+    // In low-power mode the chip duty-cycles and an SPI poll would wake it and
+    // end the cycle; report "busy" so the base class skips its noise-floor
+    // sampling. The interrupt still delivers packets.
+    if (((CustomLR2021 *)_radio)->lowPower && isInRecvMode()) return true;
     return ((CustomLR2021 *)_radio)->isReceiving();
+  }
+
+  // Dispatcher asks this right before a transmit. The poll may have woken the
+  // chip out of its duty cycle; if nothing is in flight, re-arm so a deferred
+  // transmit does not leave the receiver parked.
+  bool isReceiving() override {
+    CustomLR2021* r = (CustomLR2021 *)_radio;
+    bool busy = r->isReceiving();
+    if (r->lowPower && !busy && isInRecvMode()) { r->standby(); r->startReceive(); }
+    return busy;
   }
 
   void onBeforeStartRecv() override {

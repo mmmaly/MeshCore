@@ -145,3 +145,9 @@ bool radio_range_manager(const RangingRequest& req, uint32_t peer_addr, RangingR
 	radio_set_tx_power(s_req_dbm);
 	return ok;
 }
+
+void radio_set_low_power(bool on)
+{
+	s_lora.lowPower = on;
+	s_radio.begin();   /* wrapper re-arms RX with the new mode */
+}

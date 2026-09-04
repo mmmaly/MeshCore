@@ -1,4 +1,5 @@
 #include "serial_ble_interface.h"
+extern "C" void mc_wake(void);   /* main loop wake-up (main.cpp) */
 #include <zephyr/sys/printk.h>
 #include <zephyr/bluetooth/bluetooth.h>
 #include <zephyr/bluetooth/conn.h>
@@ -220,6 +221,7 @@ void SerialBLEInterface::_onSecured(void *conn, bool ok)
 
 void SerialBLEInterface::_onRx(const void *data, uint16_t len)
 {
+	mc_wake();
 	if (len == 0 || len > MAX_FRAME_SIZE) return;
 	mc_dump("APP->NODE", (const uint8_t *)data, len);
 	k_mutex_lock(&_lock, K_FOREVER);

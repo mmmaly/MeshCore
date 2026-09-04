@@ -14,6 +14,18 @@
 #include "serial_ble_interface.h"
 #include "MyMesh.h"   /* examples/companion_radio (on the include path) */
 
+/* Wake-ups for the main loop: the LoRa DIO interrupt and BLE data give this
+ * semaphore; otherwise the loop sleeps (MC_LOOP_SLEEP_MS) and the SoC idles. */
+K_SEM_DEFINE(mc_wake_sem, 0, 1);
+extern "C" void mc_wake(void) { k_sem_give(&mc_wake_sem); }
+#ifndef MC_LOOP_SLEEP_MS
+#ifdef MC_LOW_POWER
+#define MC_LOOP_SLEEP_MS 25
+#else
+#define MC_LOOP_SLEEP_MS 2
+#endif
+#endif
+
 SerialShim Serial;
 
 StdRNG fast_rng;
@@ -75,6 +87,10 @@ int main(void)
 
 	board.begin();
 	if (!radio_init()) { printk("radio_init FAILED\n"); return 0; }
+#ifdef MC_LOW_POWER
+	radio_set_low_power(true);
+	printk("low-power build: LR2021 RX duty cycling, %d ms loop sleep\n", MC_LOOP_SLEEP_MS);
+#endif
 	fast_rng.begin(radio_get_rng_seed());
 	if (!InternalFS.begin()) { printk("InternalFS FAILED\n"); return 0; }
 	store.begin();
@@ -125,7 +141,7 @@ int main(void)
 			       the_mesh.getNodePrefs()->node_name, InternalFS.exists("/new_prefs"));
 		}
 
-		k_msleep(1);   /* snappy serial/radio polling for the app's frame bursts */
+		k_sem_take(&mc_wake_sem, K_MSEC(MC_LOOP_SLEEP_MS));   /* radio IRQ / BLE data wake us early */
 	}
 	return 0;
 }

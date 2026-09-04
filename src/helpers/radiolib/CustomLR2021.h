@@ -79,6 +79,15 @@ public:
     return len;
   }
 
+  // Low-power (battery) mode: receive with the chip's RX duty cycling - it sleeps
+  // between short listening windows and only stays awake once a preamble is
+  // detected. Sized for the mesh's preambles (32 symbols at SF<=8). Any SPI
+  // command during the sleep phase wakes the chip and ends the cycle, so the
+  // wrapper must not poll while in this mode (see CustomLR2021Wrapper).
+  bool lowPower = false;
+  uint16_t lpSenderPreamble = 32;
+  uint8_t  lpMinSymbols = 6;
+
 #if RADIOLIB_GODMODE
   int16_t startReceive() override {
     // re-assert max payload length before every RX: a TX leaves the chip's
@@ -87,6 +96,10 @@ public:
     setLoRaPacketParams(this->preambleLengthLoRa, this->headerType,
                         RADIOLIB_LR2021_MAX_PACKET_LENGTH, this->crcTypeLoRa,
                         this->invertIQEnabled);
+    if (lowPower) {
+      uint16_t pre = lpSenderPreamble > this->preambleLengthLoRa ? this->preambleLengthLoRa : lpSenderPreamble;
+      return LR2021::startReceiveDutyCycleAuto(pre, lpMinSymbols);
+    }
     return LR2021::startReceive();
   }
 #endif

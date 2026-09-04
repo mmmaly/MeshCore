@@ -92,6 +92,7 @@ uint32_t radio_get_rng_seed();
 void radio_set_params(float freq, float bw, uint8_t sf, uint8_t cr);
 void radio_set_tx_power(int8_t dbm);
 mesh::LocalIdentity radio_new_identity();
+void radio_set_low_power(bool on);
 
 #include "RangingControl.h"
 bool radio_range_subordinate(const RangingRequest& req, uint32_t my_addr, float freq, float bw, uint8_t sf, uint8_t cr);

@@ -65,6 +65,10 @@ target_compile_definitions(app PRIVATE
 # instead of the default 865 MHz sub-GHz. The app has no 2.4 GHz preset, so this is how to put
 # the node on 2.4 GHz for the over-the-air RF test (the choice then persists in prefs).
 option(MC_BAND_2G4 "Boot on the 2.4 GHz LoRa preset instead of sub-GHz" OFF)
+option(MC_LOW_POWER "Battery build: LR2021 RX duty cycling + sleepy main loop" OFF)
+if(MC_LOW_POWER)
+  target_compile_definitions(app PRIVATE MC_LOW_POWER=1)
+endif()
 # LoRa boot params must be global -D flags (mirroring platformio.ini), not header
 # defines: core headers (e.g. RadioLibWrappers.h getSpreadingFactor) expand LORA_SF
 # in translation units that never include target.h. Keep in sync with the presets

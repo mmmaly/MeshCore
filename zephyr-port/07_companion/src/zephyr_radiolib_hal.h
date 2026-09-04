@@ -11,6 +11,7 @@
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/drivers/spi.h>
 #include <RadioLib.h>
+extern "C" void mc_wake(void);   /* main loop wake-up (main.cpp) */
 
 #define LR_PIN_NSS   0
 #define LR_PIN_DIO1  1
@@ -99,6 +100,7 @@ class ZephyrHal : public RadioLibHal {
     static bool cb_added;
     static void gpioIsr(const struct device *, struct gpio_callback *, uint32_t) {
         if (user_cb) user_cb();
+        mc_wake();
     }
 
     const struct device *spi_dev = nullptr;
