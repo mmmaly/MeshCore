@@ -14,10 +14,15 @@ public:
     : RadioLibWrapper(radio, board) { }
 
   void setParams(float freq, float bw, uint8_t sf, uint8_t cr) override {
-    ((CustomLR2021 *)_radio)->setFrequency(freq);
-    ((CustomLR2021 *)_radio)->setSpreadingFactor(sf);
-    ((CustomLR2021 *)_radio)->setBandwidth(bw);
-    ((CustomLR2021 *)_radio)->setCodingRate(cr);
+    CustomLR2021* r = (CustomLR2021 *)_radio;
+    r->setFrequency(freq);
+    r->setSpreadingFactor(sf);
+    r->setBandwidth(bw);
+    r->setCodingRate(cr);
+    // A band change (sub-GHz <-> 2.4 GHz) needs the RX front-end path and the PA
+    // re-selected; RadioLib only does that through these two calls.
+    r->setRxBoostedGainMode(r->getRxBoostLevel());
+    r->setOutputPower(r->lastPowerDbm());
     updatePreamble(sf);
   }
 
