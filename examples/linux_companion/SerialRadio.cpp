@@ -172,10 +172,12 @@ std::string SerialRadio::configLine() const {
       if (s > _cfg.sf && s <= _cfg.sf + 4 && s <= 12) sd += (sd.empty() ? "" : ",") + std::to_string(s);
     }
   }
+  // Preamble as upstream MeshCore transmits it (RadioLibWrapper::preambleLengthForSF):
+  // 32 symbols up to SF8, 16 above. Duty-cycled receivers rely on the long one.
   char line[160];
-  snprintf(line, sizeof(line), "set freq=%u bw=%u sf=%d cr=%d sd=%s pwr=%d boost=%d",
+  snprintf(line, sizeof(line), "set freq=%u bw=%u sf=%d cr=%d sd=%s pwr=%d boost=%d pre=%d",
            _cfg.freq, _cfg.bw, _cfg.sf, _cfg.cr, sd.empty() ? "none" : sd.c_str(),
-           _cfg.tx_power, _cfg.rx_boost);
+           _cfg.tx_power, _cfg.rx_boost, _cfg.sf <= 8 ? 32 : 16);
   return line;
 }
 
