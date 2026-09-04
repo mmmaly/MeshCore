@@ -5,6 +5,7 @@
  * CustomLR2021 / CustomLR2021Wrapper — single source for the LR2021 fixes. */
 #include <helpers/radiolib/CustomLR2021Wrapper.h>
 #include <zephyr/sys/reboot.h>
+#include "lr2021_rttof.h"
 
 static ZephyrHal hal;
 
@@ -120,4 +121,27 @@ void radio_set_tx_power(int8_t dbm)
 {
 	s_req_dbm = dbm;
 	s_lora.setOutputPower(clamp_tx_for_band(s_freq, dbm));
+}
+
+
+/* RTToF ranging (RangingControl.h). Both block; afterwards the mesh radio is
+ * restored from the given LoRa parameters and the wrapper re-arms RX. */
+bool radio_range_subordinate(const RangingRequest& req, uint32_t my_addr, float freq, float bw, uint8_t sf, uint8_t cr)
+{
+	int answered = 0;
+	bool ok = rttof_subordinate(s_lora, req, my_addr, LR2021_IRQ_DIO, rangingWindowMs(req.count), &answered);
+	printk("ranging: subordinate window %s, %d responses sent\n", ok ? "done" : "FAILED", answered);
+	radio_set_params(freq, bw, sf, cr);
+	radio_set_tx_power(s_req_dbm);
+	return ok;
+}
+
+bool radio_range_manager(const RangingRequest& req, uint32_t peer_addr, RangingResult& res, float freq, float bw, uint8_t sf, uint8_t cr)
+{
+	bool ok = rttof_manager(s_lora, req, peer_addr, LR2021_IRQ_DIO, res);
+	printk("ranging: manager status %u, %u/%u valid, median %d cm (min %d max %d)\n",
+	       res.status, res.valid, res.count, res.median_cm, res.min_cm, res.max_cm);
+	radio_set_params(freq, bw, sf, cr);
+	radio_set_tx_power(s_req_dbm);
+	return ok;
 }

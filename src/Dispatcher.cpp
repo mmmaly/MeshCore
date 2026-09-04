@@ -150,7 +150,7 @@ bool Dispatcher::tryParsePacket(Packet* pkt, const uint8_t* raw, int len) {
 
   pkt->header = raw[i++];
   if (pkt->getPayloadVer() > PAYLOAD_VER_1) {
-    MESH_DEBUG_PRINTLN("%s Dispatcher::checkRecv(): unsupported packet version", getLogDateTime());
+    MESH_DEBUG_PRINTLN("%s Dispatcher::checkRecv(): unsupported packet version (hdr %02x len %d)", getLogDateTime(), raw[0], len);
     return false;
   }
 

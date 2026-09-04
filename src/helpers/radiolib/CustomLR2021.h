@@ -125,6 +125,13 @@ public:
   }
 #endif
 
+  // RadioLib's cached LoRa modulation codes (protected up the hierarchy); the
+  // RTToF setup re-programs the same modulation under the ranging packet type.
+  uint8_t sfCode() const { return spreadingFactor; }
+  uint8_t bwCode() const { return bandwidth; }
+  uint8_t crCode() const { return codingRate; }
+  uint8_t ldroCode() const { return ldrOptimize; }
+
   int16_t setRxBoostedGainMode(uint8_t level) {
     _rx_boost_level = level;
     return LR2021::setRxBoostedGainMode(level);

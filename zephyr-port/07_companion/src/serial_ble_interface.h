@@ -26,6 +26,7 @@ class SerialBLEInterface : public BaseSerialInterface {
 	bool isWriteBusy() const override;
 	size_t writeFrame(const uint8_t src[], size_t len) override;
 	size_t checkRecvFrame(uint8_t dest[]) override;
+	size_t takePrivateFrame(uint8_t dest[], size_t max);   /* frames with code >= 0xF0 (RangingControl.h) */
 
 	/* invoked from the C BLE callbacks (see .cpp) */
 	void _onConnect(void *conn);
@@ -44,6 +45,8 @@ class SerialBLEInterface : public BaseSerialInterface {
 	uint8_t _send_len = 0;          /* main-thread only */
 	Frame _recv[QSZ];
 	uint8_t _recv_len = 0;          /* filled in BT ctx, read in main -> guarded by _lock */
+	Frame _priv;                    /* one pending private (>= 0xF0) frame for main() */
+	bool _priv_pending = false;
 	struct k_mutex _lock;
 
 	void *_conn = nullptr;          /* struct bt_conn* */

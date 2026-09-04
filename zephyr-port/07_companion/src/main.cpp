@@ -19,7 +19,55 @@ SerialShim Serial;
 StdRNG fast_rng;
 SimpleMeshTables tables;
 DataStore store(InternalFS, rtc_clock);
-MyMesh the_mesh(radio_driver, fast_rng, rtc_clock, tables, store);
+
+/* Stock MyMesh plus LR2021 time-of-flight ranging (RangingControl.h): answer a
+ * neighbour's ranging request as subordinate; range a contact on a private app
+ * frame 0xF0 (the BLE interface keeps those aside for us). */
+class RangingMesh : public MyMesh {
+public:
+	using MyMesh::MyMesh;
+	RangingRequest defaults{{0, 0, 0, 0}, 2450000000u, 500000, 8, 10, 20438};
+
+	void onControlDataRecv(mesh::Packet* packet) override
+	{
+		RangingRequest req;
+		printk("control packet: type %02x len %u\n", packet->payload[0], packet->payload_len);
+		if (rangingDecodeRequest(packet->payload, packet->payload_len, req)) {
+			if (memcmp(req.peer, self_id.pub_key, 4) != 0) return;
+			printk("ranging: request from a neighbour (%u Hz bw %u sf %u, %u exchanges)\n", req.freq_hz, req.bw_hz, req.sf, req.count);
+			NodePrefs* p = getNodePrefs();
+			radio_range_subordinate(req, rangingAddrFromPubKey(self_id.pub_key), p->freq, p->bw, p->sf, p->cr);
+			return;
+		}
+		MyMesh::onControlDataRecv(packet);
+	}
+
+	void rangeContact(const uint8_t* peer_pubkey, uint8_t count, RangingResult& res)
+	{
+		RangingRequest req = defaults;
+		memcpy(req.peer, peer_pubkey, 4);
+		if (count) req.count = count;
+		uint8_t payload[RANGING_REQ_LEN];
+		rangingEncodeRequest(req, payload);
+		mesh::Packet* pkt = createControlData(payload, RANGING_REQ_LEN);
+		if (!pkt) { res.status = 3; return; }
+		pkt->header &= ~PH_ROUTE_MASK;
+		pkt->header |= ROUTE_TYPE_DIRECT;
+		pkt->path_len = 0;
+		uint8_t raw[MAX_TRANS_UNIT + 8];
+		int len = pkt->writeTo(raw);
+		releasePacket(pkt);
+		if (!radio_driver.startSendRaw(raw, len)) { res.status = 3; return; }
+		int64_t t0 = k_uptime_get();
+		while (!radio_driver.isSendComplete() && k_uptime_get() - t0 < 2000) { k_msleep(2); }
+		radio_driver.onSendFinished();
+		k_msleep(RANGING_SETUP_MS);
+		NodePrefs* p = getNodePrefs();
+		radio_range_manager(req, rangingAddrFromPubKey(peer_pubkey), res, p->freq, p->bw, p->sf, p->cr);
+	}
+};
+RangingMesh the_rmesh(radio_driver, fast_rng, rtc_clock, tables, store);
+#define the_mesh the_rmesh
 
 int main(void)
 {
@@ -51,6 +99,16 @@ int main(void)
 
 	while (1) {
 		the_mesh.loop();
+		{
+			uint8_t frame[64];
+			size_t n = ble.takePrivateFrame(frame, sizeof(frame));
+			if (n >= 34 && frame[0] == RANGING_CMD_CODE) {
+				RangingResult res;
+				the_mesh.rangeContact(&frame[1], frame[33], res);
+				uint8_t out[16];
+				ble.writeFrame(out, rangingEncodeResult(res, out));
+			}
+		}
 		rtc_clock.tick();
 		sensors.loop();
 
