@@ -1,5 +1,6 @@
 #pragma once
 #include <Dispatcher.h>       // mesh::Radio
+#include "RangingControl.h"
 
 // What MyMesh calls on `radio_driver` beyond the mesh::Radio contract - the
 // part of RadioLibWrapper's surface the companion firmware actually uses.
@@ -14,6 +15,12 @@ public:
   virtual uint32_t getPacketsRecv() const = 0;
   virtual uint32_t getPacketsSent() const = 0;
   virtual uint32_t getPacketsRecvErrors() const = 0;
+
+  // LR2021 time-of-flight ranging (see RangingControl.h). Both calls block the
+  // caller for the whole window / exchange run and leave the radio back in its
+  // normal LoRa configuration. Radios without the feature return false.
+  virtual bool rangeSubordinate(const RangingRequest& req, uint32_t my_addr) { (void)req; (void)my_addr; return false; }
+  virtual bool rangeManager(const RangingRequest& req, uint32_t peer_addr, RangingResult& out) { (void)req; (void)peer_addr; out.status = 2; return false; }
 };
 
 // The companion's globals (the_mesh, and radio_driver they bind to) are
@@ -44,6 +51,8 @@ public:
   uint32_t getPacketsRecv() const override { return _r->getPacketsRecv(); }
   uint32_t getPacketsSent() const override { return _r->getPacketsSent(); }
   uint32_t getPacketsRecvErrors() const override { return _r->getPacketsRecvErrors(); }
+  bool rangeSubordinate(const RangingRequest& req, uint32_t my_addr) override { return _r->rangeSubordinate(req, my_addr); }
+  bool rangeManager(const RangingRequest& req, uint32_t peer_addr, RangingResult& out) override { return _r->rangeManager(req, peer_addr, out); }
 
 private:
   HostRadio* _r = nullptr;

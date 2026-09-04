@@ -247,6 +247,7 @@ static bool rng_mode = false;        // radio is in RTToF packet type (LoRa RX s
 static bool rng_subordinate = false;
 static uint32_t rng_user_delay = 0;  // 0 = Semtech's table value
 static uint32_t rng_addr = 0x32101222;
+static int64_t rng_sub_until = 0;    // uptime ms at which an unattended subordinate window ends (0 = none)
 
 static uint32_t rng_delay_indicator() {
   if (rng_user_delay) return rng_user_delay;
@@ -289,8 +290,9 @@ static int16_t rng_arm_subordinate() {
 }
 
 static void rng_off() {
-  rng_mode = false; rng_subordinate = false;
+  rng_mode = false; rng_subordinate = false; rng_sub_until = 0;
   radio.standby();
+  radio.clearTxFifo(); radio.clearRxFifo();
   radio.setPacketType(RADIOLIB_LR2021_PACKET_TYPE_LORA);
   apply_config();
 }
@@ -300,6 +302,7 @@ static bool rng_exchange(int32_t* raw, uint8_t* rssi, uint32_t* irq_out) {
   static const uint8_t payload[7] = {0x52, 0x4e, 0x47, 0x00, 0x00, 0x00, 0x00};
   radio.standby();
   radio.clearIrqState(RADIOLIB_LR2021_IRQ_ALL);
+  radio.clearTxFifo();                       // stale bytes here corrupt the next TX (found the hard way)
   radio.writeRadioTxFifo(payload, sizeof(payload));
   int16_t st = radio.setTx(0);
   if (st != RADIOLIB_ERR_NONE) { printk("err rng setTx %d\n", st); return false; }
@@ -488,11 +491,13 @@ static void handle_line(char* line) {
     if (!tok) { printk("err rng: sub|req|delay|off\n"); return; }
     if (!strcmp(tok, "off")) { rng_off(); printk("ok rng off\n"); return; }
     if (!strcmp(tok, "delay")) { char* v = strtok(nullptr, " "); rng_user_delay = v ? strtoul(v, nullptr, 10) : 0; printk("ok rng delay=%u (table %u)\n", rng_user_delay, rng_delay_indicator()); return; }
-    if (!strcmp(tok, "sub")) {
+    if (!strcmp(tok, "sub")) {   // rng sub [addr] [window_ms]: window > 0 returns to LoRa by itself
       char* a = strtok(nullptr, " "); uint32_t addr = a ? strtoul(a, nullptr, 16) : rng_addr;
+      char* w = strtok(nullptr, " "); uint32_t window = w ? strtoul(w, nullptr, 10) : 0;
       if (rng_setup(true, addr) != RADIOLIB_ERR_NONE) return;
       int16_t st = rng_arm_subordinate();
-      printk("%s rng sub addr=%08x freq=%u bw=%u sf=%u delay=%u\n", st == RADIOLIB_ERR_NONE ? "ok" : "err", addr, cfg.freq_hz, cfg.bw_hz, cfg.sf, rng_delay_indicator());
+      rng_sub_until = window ? k_uptime_get() + window : 0;
+      printk("%s rng sub addr=%08x freq=%u bw=%u sf=%u delay=%u window=%u\n", st == RADIOLIB_ERR_NONE ? "ok" : "err", addr, cfg.freq_hz, cfg.bw_hz, cfg.sf, rng_delay_indicator(), window);
       return;
     }
     if (!strcmp(tok, "req")) {
@@ -595,6 +600,7 @@ int main(void) {
   int64_t last_poll = 0;
   while (1) {
     int64_t now = k_uptime_get();
+    if (rng_sub_until && now >= rng_sub_until) { rng_off(); printk("rng sub: window over, back to LoRa\n"); }
     if (irq_flag || now - last_poll >= 20) {   // IRQ edge, plus a poll in case one was missed
       irq_flag = false;
       last_poll = now;

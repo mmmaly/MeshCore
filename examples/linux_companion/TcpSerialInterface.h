@@ -25,6 +25,7 @@ public:
   bool isWriteBusy() const override { return false; }
   size_t writeFrame(const uint8_t src[], size_t len) override;
   size_t checkRecvFrame(uint8_t dest[]) override;
+  size_t takePrivateFrame(uint8_t dest[], size_t max);   // frames with code >= 0xF0 (see RangingControl.h)
 
 private:
   void acceptLoop();
@@ -38,4 +39,5 @@ private:
   std::mutex _mtx;
   std::vector<uint8_t> _in;                 // raw bytes from the socket
   std::deque<std::vector<uint8_t>> _frames; // decoded command frames
+  std::deque<std::vector<uint8_t>> _private; // private (>= 0xF0) frames for main()
 };

@@ -131,6 +131,10 @@ void SerialRadio::handleLine(char* line) {
     has_cfg = false;
   } else if (!strncmp(line, "rx err", 6)) {
     _n_err++;
+  } else if (!strncmp(line, "rng summary", 11) || !strncmp(line, "ok rng sub", 10) || !strncmp(line, "err rng", 7)) {
+    { std::lock_guard<std::mutex> lk(_rng_mtx); _rng_line = line; }
+    _rng_cv.notify_all();
+    fprintf(stderr, "[serial] %s\n", line);
   } else if (!strncmp(line, "tx done", 7) || !strncmp(line, "tx err", 6)) {
     { std::lock_guard<std::mutex> lk(_tx_mtx); _tx_result = line[3] == 'd' ? 1 : -1; }
     _tx_cv.notify_all();
@@ -258,4 +262,60 @@ void SerialRadio::setRxBoostedGainMode(bool state) {
 bool SerialRadio::getRxBoostedGainMode() const {
   std::lock_guard<std::mutex> lk(_cfg_mtx);
   return _cfg.rx_boost != 0;
+}
+
+// ---- LR2021 time-of-flight ranging through the modem's "rng" commands ----
+
+bool SerialRadio::waitRangingLine(const char* prefix, int timeout_ms, std::string& out) {
+  std::unique_lock<std::mutex> lk(_rng_mtx);
+  bool ok = _rng_cv.wait_for(lk, std::chrono::milliseconds(timeout_ms),
+                             [&] { return !_rng_line.empty() && (_rng_line.rfind(prefix, 0) == 0 || _rng_line.rfind("err rng", 0) == 0); });
+  out = _rng_line;
+  return ok && out.rfind(prefix, 0) == 0;
+}
+
+static std::string rangingSetLine(const RangingRequest& req) {
+  char line[128];
+  snprintf(line, sizeof(line), "set freq=%u bw=%u sf=%u cr=5 sd=none", req.freq_hz, req.bw_hz, req.sf);
+  return line;
+}
+
+bool SerialRadio::rangeSubordinate(const RangingRequest& req, uint32_t my_addr) {
+  if (_fd < 0) return false;
+  uint32_t window = rangingWindowMs(req.count);
+  { std::lock_guard<std::mutex> lk(_rng_mtx); _rng_line.clear(); }
+  sendLine(rangingSetLine(req));
+  sendLine("rng delay " + std::to_string(req.delay));
+  char cmd[64]; snprintf(cmd, sizeof(cmd), "rng sub %08x %u", my_addr, window);
+  sendLine(cmd);
+  std::string ack;
+  bool ok = waitRangingLine("ok rng sub", 2000, ack);
+  fprintf(stderr, "[serial] ranging subordinate %s for %u ms (addr %08x)\n", ok ? "armed" : "FAILED", window, my_addr);
+  if (ok) usleep((window + 200) * 1000);   // the modem returns to LoRa by itself when the window ends
+  sendConfig();                             // and we put our own configuration back
+  return ok;
+}
+
+bool SerialRadio::rangeManager(const RangingRequest& req, uint32_t peer_addr, RangingResult& out) {
+  out = RangingResult();
+  out.count = req.count;
+  if (_fd < 0) { out.status = 2; return false; }
+  { std::lock_guard<std::mutex> lk(_rng_mtx); _rng_line.clear(); }
+  sendLine(rangingSetLine(req));
+  sendLine("rng delay " + std::to_string(req.delay));
+  char cmd[64]; snprintf(cmd, sizeof(cmd), "rng req %08x %u", peer_addr, req.count);
+  sendLine(cmd);
+  std::string sum;
+  bool ok = waitRangingLine("rng summary", (int)req.count * 1700 + 4000, sum);
+  sendConfig();
+  if (!ok) { out.status = 1; return false; }
+  // "rng summary: N/M valid, median raw=R dist=D m, min A max B" or "rng summary: 0/M valid"
+  int valid = 0, total = 0; float med = 0, mn = 0, mx = 0; int raw = 0;
+  if (sscanf(sum.c_str(), "rng summary: %d/%d valid, median raw=%d dist=%f m, min %f max %f", &valid, &total, &raw, &med, &mn, &mx) >= 4 && valid > 0) {
+    out.status = 0; out.valid = (uint8_t)valid;
+    out.median_cm = (int32_t)lroundf(med * 100); out.min_cm = (int32_t)lroundf(mn * 100); out.max_cm = (int32_t)lroundf(mx * 100);
+    return true;
+  }
+  out.status = 1;
+  return false;
 }

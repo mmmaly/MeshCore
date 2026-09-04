@@ -58,6 +58,9 @@ public:
   uint32_t getPacketsSent() const override { return _n_sent; }
   uint32_t getPacketsRecvErrors() const override { return _n_err; }
 
+  bool rangeSubordinate(const RangingRequest& req, uint32_t my_addr) override;
+  bool rangeManager(const RangingRequest& req, uint32_t peer_addr, RangingResult& out) override;
+
 private:
   void readerLoop();
   bool openPort();
@@ -86,4 +89,10 @@ private:
   std::mutex _tx_mtx;
   std::condition_variable _tx_cv;
   int _tx_result = 0;                 // 0 pending, 1 done, -1 error
+
+  // "rng summary: ..." / "ok rng sub ..." from the modem, awaited by the ranging calls
+  std::mutex _rng_mtx;
+  std::condition_variable _rng_cv;
+  std::string _rng_line;
+  bool waitRangingLine(const char* prefix, int timeout_ms, std::string& out);
 };
