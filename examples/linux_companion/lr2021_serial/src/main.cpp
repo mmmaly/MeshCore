@@ -62,6 +62,21 @@ static LR2021PaTableEntry_t wio_pa_lf[32] = {
   {5, 5, 40},  {7, 4, 41},  {7, 4, 43}, {7, 7, 44},  // 19 .. 22
 };
 
+
+// 2.4 GHz PA settings Semtech measured on the Wio-LR2021 (same dtsi,
+// "tx-power-cfg-hf", meas @2445 MHz): {half-dB power code, PA HF duty cycle},
+// indexed by requested dBm + 18. RadioLib's setOutputPower() cannot be used on
+// this path: it sends the LF duty-cycle field as its "unused" marker (6) where
+// the chip wants 0 for the HF PA, and answers CMD_PERR.
+struct HfPaEntry { int8_t half_power; uint8_t duty; };
+static const HfPaEntry wio_pa_hf[31] = {
+  {-39,29}, {-39,29}, {-39,16}, {-35,19}, {-32,19}, {-29,19}, {-27,16}, {-24,17},  // -18 .. -11
+  {-22,16}, {-19,18}, {-17,16}, {-14,21}, {-12,18}, { -7,30}, { -8,16}, { -5,24},  // -10 .. -3
+  { -2,27}, {  1,29}, {  4,30}, {  6,30}, {  7,28}, {  8,25}, { 10,25}, { 15,31},  //  -2 .. 5
+  { 16,30}, { 18,30}, { 21,31}, { 22,30}, { 24,30}, { 24,26}, { 24,16},            //   6 .. 12
+};
+
+
 struct Config {
   uint32_t freq_hz = 869432000;   // MeshCore CZ community preset
   uint8_t  sf = 7;
@@ -75,6 +90,20 @@ struct Config {
   uint16_t pre = 16;              // preamble symbols on TX (MeshCore uses 16)
 };
 static Config cfg;
+
+static int16_t set_output_power(int8_t pwr) {
+  if (cfg.freq_hz <= 1500000000u) return radio.setOutputPower(pwr);   // LF: RadioLib + wio_pa_lf
+  const HfPaEntry& e = wio_pa_hf[pwr + 18];
+  // pa_sel=HF, pa_lf_mode=FSM, pa_lf_duty=0, pa_lf_slices=7, pa_hf_duty=table (as Semtech's BSP does)
+  // Order matters (measured on fw 1.24): SetPaConfig selecting the HF PA answers
+  // CMD_PERR while the TX power still programmed is outside the HF range (e.g. the
+  // 44 = +22 dBm left over from sub-GHz operation). Program the HF power first.
+  int16_t st = radio.setTxParams(e.half_power, RADIOLIB_LRXXXX_PA_RAMP_48U);
+  if (st != RADIOLIB_ERR_NONE) { printk("err hf setTxParams %d (half %d)\n", st, e.half_power); return st; }
+  st = radio.setPaConfig(1, RADIOLIB_LR2021_PA_LF_MODE_FSM, 0, 7, e.duty);
+  if (st != RADIOLIB_ERR_NONE) printk("err hf setPaConfig %d (duty %u)\n", st, e.duty);
+  return st;
+}
 
 static uint32_t n_rx = 0, n_rx_err = 0, n_tx = 0, n_tx_err = 0;
 static int64_t last_rx_ms = 0;
@@ -126,17 +155,34 @@ static int16_t arm_rx() {
 
 static int16_t apply_config() {
   radio.standby();
-  int16_t st = radio.setFrequency(cfg.freq_hz / 1000000.0f);
-  if (st == RADIOLIB_ERR_NONE) st = radio.setBandwidth(cfg.bw_hz / 1000.0f);
-  if (st == RADIOLIB_ERR_NONE) st = radio.setSpreadingFactor(cfg.sf);
-  if (st == RADIOLIB_ERR_NONE) st = radio.setCodingRate(cfg.cr);
-  if (st == RADIOLIB_ERR_NONE) st = radio.setSyncWord(cfg.sync);
-  if (st == RADIOLIB_ERR_NONE) st = radio.setPreambleLength(cfg.pre);
-  if (st == RADIOLIB_ERR_NONE) st = radio.setOutputPower(cfg.pwr);
-  if (st == RADIOLIB_ERR_NONE) st = radio.setRxBoostedGainMode(cfg.boost);
-  if (st == RADIOLIB_ERR_NONE) st = radio.setCRC(2);
-  if (st == RADIOLIB_ERR_NONE) st = radio.explicitHeader();
-  if (st != RADIOLIB_ERR_NONE) { printk("err modulation %d\n", st); return st; }
+  // The sub-GHz PA spans -9..+22 dBm, the 2.4 GHz one -18..+12; RadioLib rejects
+  // anything outside the band's range, so clamp the request rather than fail the
+  // whole configuration when the app carries a 22 dBm setting over to 2.4 GHz.
+  int8_t pwr = cfg.pwr;
+  if (cfg.freq_hz > 1500000000u) { if (pwr > 12) pwr = 12; if (pwr < -18) pwr = -18; }
+  else                           { if (pwr > 22) pwr = 22; if (pwr < -9)  pwr = -9;  }
+  struct Step { const char* name; int16_t st; } steps[] = {
+    {"frequency", radio.setFrequency(cfg.freq_hz / 1000000.0f)},
+    {"bandwidth", RADIOLIB_ERR_NONE}, {"sf", RADIOLIB_ERR_NONE}, {"cr", RADIOLIB_ERR_NONE},
+    {"sync", RADIOLIB_ERR_NONE}, {"preamble", RADIOLIB_ERR_NONE}, {"power", RADIOLIB_ERR_NONE},
+    {"boost", RADIOLIB_ERR_NONE}, {"crc", RADIOLIB_ERR_NONE}, {"header", RADIOLIB_ERR_NONE},
+  };
+  int16_t st = steps[0].st;
+  if (st == RADIOLIB_ERR_NONE) st = steps[1].st = radio.setBandwidth(cfg.bw_hz / 1000.0f);
+  if (st == RADIOLIB_ERR_NONE) st = steps[2].st = radio.setSpreadingFactor(cfg.sf);
+  if (st == RADIOLIB_ERR_NONE) st = steps[3].st = radio.setCodingRate(cfg.cr);
+  if (st == RADIOLIB_ERR_NONE) st = steps[4].st = radio.setSyncWord(cfg.sync);
+  if (st == RADIOLIB_ERR_NONE) st = steps[5].st = radio.setPreambleLength(cfg.pre);
+  if (st == RADIOLIB_ERR_NONE) st = steps[6].st = set_output_power(pwr);
+  if (st == RADIOLIB_ERR_NONE) st = steps[7].st = radio.setRxBoostedGainMode(cfg.boost);
+  if (st == RADIOLIB_ERR_NONE) st = steps[8].st = radio.setCRC(2);
+  if (st == RADIOLIB_ERR_NONE) st = steps[9].st = radio.explicitHeader();
+  if (st != RADIOLIB_ERR_NONE) {
+    const char* which = "?";
+    for (auto& s : steps) if (s.st != RADIOLIB_ERR_NONE) { which = s.name; break; }
+    printk("err modulation %d at %s\n", st, which);
+    return st;
+  }
 
   // Side detectors last: SetLoraModulationParams (any of the setters above)
   // clears them in the chip. Same channel and bandwidth, own SF/LDRO/sync.
@@ -240,7 +286,7 @@ static bool set_key(Config& c, const char* k, const char* v) {
   if (!strcmp(k, "sf"))    { c.sf = (uint8_t)atoi(v); return c.sf >= 5 && c.sf <= 12; }
   if (!strcmp(k, "bw"))    { c.bw_hz = (uint32_t)strtoul(v, nullptr, 10); return c.bw_hz >= 7800 && c.bw_hz <= 1000000; }
   if (!strcmp(k, "cr"))    { int cr = atoi(v); if (cr >= 1 && cr <= 4) cr += 4; c.cr = (uint8_t)cr; return cr >= 5 && cr <= 8; }
-  if (!strcmp(k, "pwr"))   { c.pwr = (int8_t)atoi(v); return c.pwr >= -9 && c.pwr <= 22; }
+  if (!strcmp(k, "pwr"))   { c.pwr = (int8_t)atoi(v); return c.pwr >= -18 && c.pwr <= 22; }  // clamped per band in apply_config()
   if (!strcmp(k, "boost")) { c.boost = (uint8_t)atoi(v); return c.boost <= 7; }
   if (!strcmp(k, "sync"))  { c.sync = (uint8_t)strtoul(v, nullptr, 16); return true; }
   if (!strcmp(k, "pre"))   { c.pre = (uint16_t)atoi(v); return c.pre >= 4 && c.pre <= 1000; }
@@ -304,6 +350,17 @@ static void handle_line(char* line) {
     print_cfg("");
     printk("status: rx=%u rx_err=%u tx=%u tx_err=%u last_rx_ms=%lld uptime_ms=%lld chip=%u.%u irq=%08x\n",
            n_rx, n_rx_err, n_tx, n_tx_err, last_rx_ms, k_uptime_get(), maj, min, radio.getIrqFlags());
+    return;
+  }
+  if (!strncmp(line, "pa ", 3)) {   // raw SetPaConfig probe: pa <sel> <lfmode> <lfduty> <slices> <hfduty> [txpower]
+    int a[6] = {0, 0, 6, 7, 16, 0}; int n = 0;
+    for (char* t = strtok(line + 3, " "); t && n < 6; t = strtok(nullptr, " ")) a[n++] = atoi(t);
+    radio.standby();
+    int16_t st = radio.setPaConfig(a[0], a[1], a[2], a[3], a[4]);
+    int16_t st2 = radio.setTxParams((int8_t)a[5], RADIOLIB_LRXXXX_PA_RAMP_48U);
+    uint16_t errs = 0; radio.getErrors(&errs);
+    printk("pa sel=%d mode=%d lfduty=%d slices=%d hfduty=%d -> setPaConfig %d, setTxParams(%d) %d, errors=%04x\n",
+           a[0], a[1], a[2], a[3], a[4], st, a[5], st2, errs);
     return;
   }
   if (!strcmp(line, "rearm")) { printk("%s\n", arm_rx() == RADIOLIB_ERR_NONE ? "ok" : "err rearm"); return; }
