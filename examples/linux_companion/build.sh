@@ -13,7 +13,8 @@ INC="-Isrc -Ilib/ed25519 -Iexamples/linux_companion -Iexamples/linux_companion/h
 # region here. These are the EU MeshCore settings this node runs on.
 DEF="-DLINUX_PLATFORM=1 -DMESH_DEBUG=${MESH_DEBUG:-1} -DMAX_GROUP_CHANNELS=8 -DMAX_CONTACTS=200
      -DLORA_FREQ=${LORA_FREQ:-869.618} -DLORA_BW=${LORA_BW:-62.5}
-     -DLORA_SF=${LORA_SF:-7} -DLORA_CR=${LORA_CR:-5}"
+     -DLORA_SF=${LORA_SF:-7} -DLORA_CR=${LORA_CR:-5}
+     -DLORA_TX_POWER=${LORA_TX_POWER:-20} -DMAX_LORA_TX_POWER=${MAX_LORA_TX_POWER:-22}"
 FORCE="-include examples/linux_companion/host/FS.h"
 FLAGS="-std=c++17 -O2 -Wno-deprecated-declarations $DEF $FORCE $INC"
 
@@ -24,7 +25,8 @@ SRCS="src/Utils.cpp src/Packet.cpp src/Identity.cpp src/Dispatcher.cpp src/Mesh.
       src/helpers/ClientACL.cpp src/helpers/RegionMap.cpp
       src/helpers/TransportKeyStore.cpp
       examples/companion_radio/MyMesh.cpp examples/companion_radio/DataStore.cpp
-      examples/linux_companion/SdrRadio.cpp examples/linux_companion/TcpSerialInterface.cpp
+      examples/linux_companion/SdrRadio.cpp examples/linux_companion/SerialRadio.cpp
+      examples/linux_companion/TcpSerialInterface.cpp
       examples/linux_companion/main.cpp"
 
 OBJS=""

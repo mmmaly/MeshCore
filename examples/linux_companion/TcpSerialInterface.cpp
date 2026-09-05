@@ -177,9 +177,24 @@ size_t TcpSerialInterface::writeFrame(const uint8_t src[], size_t len) {
 
 size_t TcpSerialInterface::checkRecvFrame(uint8_t dest[]) {
   std::lock_guard<std::mutex> lk(_mtx);
-  if (_frames.empty()) return 0;
-  auto f = std::move(_frames.front());
-  _frames.pop_front();
-  memcpy(dest, f.data(), f.size());
-  return f.size();
+  while (!_frames.empty()) {
+    auto f = std::move(_frames.front());
+    _frames.pop_front();
+    // Private frame codes (0xF0..) are ours, not the firmware's: keep them aside for
+    // main() instead of handing MyMesh a command it would answer with "unsupported".
+    if (!f.empty() && f[0] >= 0xF0) { _private.push_back(std::move(f)); continue; }
+    memcpy(dest, f.data(), f.size());
+    return f.size();
+  }
+  return 0;
+}
+
+size_t TcpSerialInterface::takePrivateFrame(uint8_t dest[], size_t max) {
+  std::lock_guard<std::mutex> lk(_mtx);
+  if (_private.empty()) return 0;
+  auto f = std::move(_private.front());
+  _private.pop_front();
+  size_t n = f.size() < max ? f.size() : max;
+  memcpy(dest, f.data(), n);
+  return n;
 }

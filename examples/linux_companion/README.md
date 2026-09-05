@@ -80,3 +80,33 @@ nonsense had anyone changed radio settings from the app.
 
 That is the whole argument for this port in one bug: behaviour you mirror by
 reading is behaviour you can get subtly wrong forever, and never notice.
+
+## Second radio: the Semtech LR2021 EVK over USB serial (`SerialRadio`)
+
+Since 2026-09-03 the same binary can drive a real LoRa transceiver instead of
+the SDR pair: the **LR2021EVK1XBS1** kit (Seeed XIAO nRF54L15 + Wio-LR2021)
+running the `lr2021_serial/` firmware in this directory. The kit is a
+microcontroller board, not a computer, so the node still lives on the host:
+
+```
+app ──TCP──> linux_companion --serial /dev/ttyACM0 ──USB CDC──> lr2021_serial (nRF54L15) ──SPI──> LR2021
+```
+
+| Seam | Provided here |
+|---|---|
+| `HostRadio` (`mesh::Radio` + what `MyMesh` calls on `radio_driver`) | base of both `SdrRadio` and `SerialRadio` |
+| `RadioProxy` | `radio_driver` global; `main()` selects the backend from argv, since `the_mesh` is constructed before argv is seen |
+| `SerialRadio` | line protocol on the serial port: `rx cfg:`/`rx ok:` exactly as `lora_rx` prints them, `tx <hex>` → `tx done`, `set ...` for the app's radio settings |
+
+```sh
+LORA_FREQ=869.432 LORA_SF=7 sh examples/linux_companion/build.sh
+./build/linux_companion -p 5000 -d ~/anaxos-cz --serial /dev/ttyACM0 --side-sfs 8 --tx-power 22
+```
+
+`--side-sfs` lists extra spreading factors the LR2021 receives *in parallel*
+on the node's channel (hardware side detectors; all must be above the node's
+SF and within +4 of it — the invalid ones are dropped when the app changes
+the SF). `setParams` from the app retunes the modem live; the app's TX power
+and "RX boosted gain" settings map onto the chip's PA (−9..+22 dBm,
+`MAX_LORA_TX_POWER` in `build.sh`) and boosted-gain level. The port is
+reopened and reconfigured after a USB glitch.
