@@ -6,6 +6,7 @@
 #include <helpers/radiolib/CustomLR2021Wrapper.h>
 #include <zephyr/sys/reboot.h>
 #include "lr2021_rttof.h"
+#include "lr2021_pram.h"
 
 static ZephyrHal hal;
 
@@ -61,6 +62,12 @@ static bool radio_bringup(float freq, float bw, uint8_t sf, uint8_t cr)
 					  RADIOLIB_LR2021_LORA_SYNC_WORD_PRIVATE,
 					  clamp_tx_for_band(freq, s_req_dbm), 16, /*tcxoVoltage=*/0.0f);
 		if (st == RADIOLIB_ERR_NONE) {
+			/* Semtech's firmware patch RAM (datasheet 22.3): lost on the reset
+			 * begin() just did, never loaded by RadioLib */
+			uint16_t pram_ver = 0;
+			int16_t ps = lr2021_load_pram(s_lora, &pram_ver);
+			if (ps == RADIOLIB_ERR_NONE) printk("radio: PRAM loaded, version %u\n", pram_ver);
+			else printk("radio: PRAM load failed (%d), continuing without it\n", ps);
 			/* match CustomLR2021's proven config: explicit header, CRC, RX boosted gain */
 			s_lora.explicitHeader();
 			s_lora.setCRC(2);
