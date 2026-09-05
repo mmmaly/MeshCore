@@ -443,8 +443,11 @@ static bool set_key(Config& c, const char* k, const char* v) {
   if (!strcmp(k, "sd")) {
     c.nside = 0;
     if (!strcmp(v, "none") || !*v) return true;
+    // strtok_r: the caller is itself iterating with strtok over the command line, and
+    // a nested strtok() resets it - every key after "sd=" used to be silently dropped.
     char tmp[32]; strncpy(tmp, v, sizeof(tmp) - 1); tmp[sizeof(tmp) - 1] = 0;
-    for (char* t = strtok(tmp, ","); t; t = strtok(nullptr, ",")) {
+    char* save = nullptr;
+    for (char* t = strtok_r(tmp, ",", &save); t; t = strtok_r(nullptr, ",", &save)) {
       if (c.nside >= 3) return false;
       int sf = atoi(t);
       if (sf < 5 || sf > 12) return false;
@@ -471,7 +474,8 @@ static void handle_line(char* line) {
   if (!strncmp(line, "set ", 4) || !strcmp(line, "set")) {
     Config nc = cfg;
     char* p = line + 3;
-    for (char* tok = strtok(p, " "); tok; tok = strtok(nullptr, " ")) {
+    char* save = nullptr;
+    for (char* tok = strtok_r(p, " ", &save); tok; tok = strtok_r(nullptr, " ", &save)) {
       char* eq = strchr(tok, '=');
       if (!eq) { printk("err set: expected key=value, got '%s'\n", tok); return; }
       *eq = 0;
