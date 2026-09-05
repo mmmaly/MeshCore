@@ -34,6 +34,7 @@
 #include <ctype.h>
 #include <math.h>
 #include "zephyr_hal.h"
+#include "lr2021_pram.h"
 
 #define FW_NAME "lr2021_serial"
 #define FW_VERSION "1.0"
@@ -478,8 +479,9 @@ static void handle_line(char* line) {
     uint8_t maj = 0, min = 0;
     radio.getVersion(&maj, &min);
     print_cfg("");
-    printk("status: rx=%u rx_err=%u tx=%u tx_err=%u last_rx_ms=%lld uptime_ms=%lld chip=%u.%u irq=%08x\n",
-           n_rx, n_rx_err, n_tx, n_tx_err, last_rx_ms, k_uptime_get(), maj, min, radio.getIrqFlags());
+    bool pram = false; uint16_t pv = 0; radio.checkPramLoaded(&pram); if (pram) radio.getPramVersion(&pv);
+    printk("status: rx=%u rx_err=%u tx=%u tx_err=%u last_rx_ms=%lld uptime_ms=%lld chip=%u.%u pram=%u irq=%08x\n",
+           n_rx, n_rx_err, n_tx, n_tx_err, last_rx_ms, k_uptime_get(), maj, min, pram ? pv : 0, radio.getIrqFlags());
     return;
   }
   if (!strncmp(line, "rng", 3)) {
@@ -575,6 +577,14 @@ int main(void) {
   if (st != RADIOLIB_ERR_NONE) {
     printk("fatal: LR2021 init failed (%d) - check the shield\n", st);
     while (1) k_msleep(1000);
+  }
+  {
+    // Semtech's firmware patch (datasheet 22.3, "highly recommended"); it does not
+    // survive the reset begin() just did, and RadioLib never loads it.
+    uint16_t pram_ver = 0;
+    int16_t ps = lr2021_load_pram(radio, &pram_ver);
+    if (ps == RADIOLIB_ERR_NONE) printk("pram loaded, version %u\n", pram_ver);
+    else printk("err pram load %d (continuing without it)\n", ps);
   }
   radio.setPacketReceivedAction(on_irq);
   if (apply_config() != RADIOLIB_ERR_NONE) printk("err initial config\n");
