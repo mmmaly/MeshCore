@@ -93,7 +93,9 @@ struct Config {
   uint32_t freq_hz = 869432000;   // MeshCore CZ community preset
   uint8_t  sf = 7;
   uint32_t bw_hz = 62500;
-  uint8_t  cr = 5;                // 4/5 .. 4/8, RadioLib convention
+  uint8_t  cr = 5;                // 4/5 .. 4/8, RadioLib convention (standard codes)
+  uint8_t  cr_code = 1;           // chip code actually programmed: 1..4 standard, 5/6/7 = 4/5,4/6,4/8 long
+                                  // interleaver, 8/9 = 4/6,4/8 convolutional (LR2021-only, "LoRa Plus")
   uint8_t  side[3] = {8, 0, 0};   // side-detector SFs, all > sf, span <= 4
   uint8_t  nside = 1;
   int8_t   pwr = 22;              // dBm; the sub-GHz PA goes to +22
@@ -137,14 +139,25 @@ static void uart_isr(const device* dev, void*) {
 }
 
 /* ---------- helpers ---------- */
+static const char* cr_name(uint8_t code) {
+  static const char* n[] = {"?", "5", "6", "7", "8", "5li", "6li", "8li", "6cc", "8cc"};
+  return code <= 9 ? n[code] : "?";
+}
+static int cr_code_from(const char* v) {
+  if (!strcmp(v, "5li")) return 5; if (!strcmp(v, "6li")) return 6; if (!strcmp(v, "8li")) return 7;
+  if (!strcmp(v, "6cc")) return 8; if (!strcmp(v, "8cc")) return 9;
+  int cr = atoi(v); if (cr >= 1 && cr <= 4) cr += 4;
+  return (cr >= 5 && cr <= 8) ? cr - 4 : -1;
+}
+
 static void print_cfg(const char* prefix) {
   char sd[16] = "none";
   if (cfg.nside) {
     int p = 0;
     for (int i = 0; i < cfg.nside; i++) p += snprintf(sd + p, sizeof(sd) - p, "%s%u", i ? "," : "", cfg.side[i]);
   }
-  printk("%scfg: freq=%u sf=%u bw=%u cr=%u sd=%s pwr=%d boost=%u sync=%02x pre=%u\n",
-         prefix, cfg.freq_hz, cfg.sf, cfg.bw_hz, cfg.cr, sd, cfg.pwr, cfg.boost, cfg.sync, cfg.pre);
+  printk("%scfg: freq=%u sf=%u bw=%u cr=%s sd=%s pwr=%d boost=%u sync=%02x pre=%u\n",
+         prefix, cfg.freq_hz, cfg.sf, cfg.bw_hz, cr_name(cfg.cr_code), sd, cfg.pwr, cfg.boost, cfg.sync, cfg.pre);
 }
 
 // Semtech airtime formula (ms), explicit header, CRC on.
@@ -196,6 +209,12 @@ static int16_t apply_config() {
     return st;
   }
 
+  // LoRa Plus coding rates (long interleaver / convolutional): RadioLib's cached
+  // code stays at the nearest standard one; program the real code directly.
+  if (cfg.cr_code > 4) {
+    st = radio.setLoRaModulationParams(radio.sfCode(), radio.bwCode(), cfg.cr_code, radio.ldroCode());
+    if (st != RADIOLIB_ERR_NONE) { printk("err coding rate code %u: %d\n", cfg.cr_code, st); return st; }
+  }
   // Side detectors last: SetLoraModulationParams (any of the setters above)
   // clears them in the chip. Same channel and bandwidth, own SF/LDRO/sync.
   if (cfg.nside) {
@@ -351,8 +370,8 @@ static void service_radio() {
       static char hex[2 * RADIOLIB_LR2021_MAX_PACKET_LENGTH + 1];
       for (size_t i = 0; i < len; i++) snprintf(hex + 2 * i, 3, "%02x", buf[i]);
       // the chip reports the header's CR code (1..4 = 4/5..4/8); print it RadioLib-style
-      printk("rx cfg: freq=%u sf=%u bw=%u cr=%u snr=%.1f rssi=%.1f det=%u len=%u time=%lld\n",
-             cfg.freq_hz, sf_rx, cfg.bw_hz, (unsigned)cr + 4, (double)snr, (double)rssi, det,
+      printk("rx cfg: freq=%u sf=%u bw=%u cr=%s snr=%.1f rssi=%.1f det=%u len=%u time=%lld\n",
+             cfg.freq_hz, sf_rx, cfg.bw_hz, cr_name(cr), (double)snr, (double)rssi, det,
              (unsigned)len, k_uptime_get());
       printk("rx ok: %s\n", hex);
       n_rx++;
@@ -416,7 +435,7 @@ static bool set_key(Config& c, const char* k, const char* v) {
   if (!strcmp(k, "freq"))  { c.freq_hz = (uint32_t)strtoul(v, nullptr, 10); return c.freq_hz >= 150000000 && c.freq_hz <= 2500000000u; }
   if (!strcmp(k, "sf"))    { c.sf = (uint8_t)atoi(v); return c.sf >= 5 && c.sf <= 12; }
   if (!strcmp(k, "bw"))    { c.bw_hz = (uint32_t)strtoul(v, nullptr, 10); return c.bw_hz >= 7800 && c.bw_hz <= 1000000; }
-  if (!strcmp(k, "cr"))    { int cr = atoi(v); if (cr >= 1 && cr <= 4) cr += 4; c.cr = (uint8_t)cr; return cr >= 5 && cr <= 8; }
+  if (!strcmp(k, "cr"))    { int code = cr_code_from(v); if (code < 0) return false; c.cr_code = (uint8_t)code; c.cr = code <= 4 ? code + 4 : (code == 5 ? 5 : code == 6 || code == 8 ? 6 : 8); return true; }
   if (!strcmp(k, "pwr"))   { c.pwr = (int8_t)atoi(v); return c.pwr >= -18 && c.pwr <= 22; }  // clamped per band in apply_config()
   if (!strcmp(k, "boost")) { c.boost = (uint8_t)atoi(v); return c.boost <= 7; }
   if (!strcmp(k, "sync"))  { c.sync = (uint8_t)strtoul(v, nullptr, 16); return true; }
@@ -546,7 +565,7 @@ static void handle_line(char* line) {
   if (!strcmp(line, "rearm")) { printk("%s\n", arm_rx() == RADIOLIB_ERR_NONE ? "ok" : "err rearm"); return; }
   if (!strcmp(line, "reset")) { printk("ok rebooting\n"); k_msleep(50); sys_reboot(SYS_REBOOT_COLD); }
   if (!strcmp(line, "help") || !strcmp(line, "?")) {
-    printk("ok commands: tx <hex> | set freq= sf= bw= cr= sd=<sf,..|none> pwr= boost= sync= pre= | rng sub|req|delay|off | status | rearm | reset\n");
+    printk("ok commands: tx <hex> | set freq= sf= bw= cr=<5..8|5li|6li|8li|6cc|8cc> sd=<sf,..|none> pwr= boost= sync= pre= | rng sub|req|delay|off | status | rearm | reset\n");
     return;
   }
   printk("err unknown command '%s'\n", line);

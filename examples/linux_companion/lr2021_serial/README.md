@@ -116,3 +116,25 @@ is 5 dB stronger at 22 dBm. On the mesh that was the difference between a
 node nobody heard (three flood adverts at 20 dBm, zero observer copies on
 analyzer.meshcore.cz) and one heard by 53 observer copies on the next advert.
 Absolute levels are relative to this geometry, not calibrated.
+
+## Coding rates beyond classic LoRa
+
+`set cr=` also takes the LR2021's long-interleaver codes `5li`, `6li`, `8li` and
+the generation-4 convolutional codes `6cc`, `8cc` (chip codes 5..9; only
+another LR2021 can decode them). Measured on the bench (two kits, no
+antennas, 869.5 MHz / 1 MHz / SF5, 60 packets per mode at the same weak level
+where 1 dB separates nothing from everything):
+
+| coding rate | received |
+|---|---|
+| 4/5 | 0 / 60 |
+| 4/5 long interleaver | 2 / 60 |
+| 4/8 | 17 / 60 |
+| 4/8 long interleaver | 11 / 60 |
+| 4/6 convolutional | 16 / 60 |
+| 4/8 convolutional | 39 / 60 |
+
+The long interleaver adds nothing against plain noise (it targets burst
+errors); the convolutional 4/8 code is worth about a decibel over standard
+4/8 at the same airtime, and 4/6 convolutional matches standard 4/8 at 25%
+less airtime.
