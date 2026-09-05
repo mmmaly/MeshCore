@@ -17,13 +17,30 @@ public:
     std::string rx_binary = "lora_rx", tx_binary = "lora_tx";
     std::string rx_device, rx_channels = "869618000", rx_sfs = "8";
     uint32_t bw = 62500, tx_freq = 869618000;
-    int rx_ppm = 0, tx_sf = 8, tx_cr = 1, tx_ppm = 0, tx_vga = 47;
-    bool rx_agc = true, tx_amp = true;
+    int rx_ppm = 0, tx_sf = 7, tx_cr = 1, tx_ppm = 0, tx_vga = 47;
+    // AGC default was a deaf node in waiting: on the UHIDIR stick -G -T
+    // parks the tuner at 0 dB and decodes nothing, and every service restart
+    // wiped the app-pushed prefs that used to rescue it. Manual max gain is
+    // the state the node has actually worked in.
+    bool rx_agc = false, tx_amp = true;
     double tx_duty = 10.0;
     // A LoRa chirp is constant-envelope, so full DAC scale cannot clip and
     // costs nothing in signal quality: lora_tx defaults to 0.7 for callers
     // who may not know that, but a node wants every dB. Worth +3.1 dB.
     double tx_level = 1.0;
+    // Some opens of a cheap RTL stick come up silently mistuned: the child
+    // streams samples at normal CPU, reports its gain, and decodes nothing,
+    // forever. Only a reopen re-rolls the tuner, so if no packet arrives for
+    // this long the receiver is killed and respawned. On a live LoRa channel
+    // real silence this long does not happen; on a genuinely idle channel the
+    // cost is a few seconds of downtime per interval. 0 disables.
+    int rx_watchdog_s = 600;
+    // A deaf-from-birth child is the common case of the lottery, and a child
+    // that has decoded even once has a locked tuner, so silence is judged on
+    // two clocks: a short probation until the first decode, the full watchdog
+    // interval after it. Probation must still exceed the longest plausible
+    // gap between packets on a live channel.
+    int rx_probation_s = 90;
   };
 
   explicit SdrRadio(const Config& cfg) : _cfg(cfg) {}
@@ -65,6 +82,7 @@ public:
 
 private:
   void superviseLoop();
+  void watchdogLoop();
   void readPipe(int fd);
   std::vector<std::string> rxArgv() const;
 
@@ -87,4 +105,7 @@ private:
   std::atomic<uint32_t> _n_recv{0}, _n_sent{0};
   std::atomic<pid_t> _rx_pid{-1};
   std::atomic<int> _rx_fd{-1};
+  std::atomic<time_t> _last_rx{0};        // last decode, or last child spawn
+  std::atomic<bool> _proven{false};       // this child has decoded at least once
+  std::thread _watchdog;
 };
