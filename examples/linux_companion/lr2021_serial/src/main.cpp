@@ -687,6 +687,7 @@ int main(void) {
     printk("fatal: LR2021 init failed (%d) - check the shield\n", st);
     while (1) k_msleep(1000);
   }
+#ifndef LR2021_NO_PRAM
   {
     // Semtech's firmware patch (datasheet 22.3, "highly recommended"); it does not
     // survive the reset begin() just did, and RadioLib never loads it.
@@ -695,6 +696,7 @@ int main(void) {
     if (ps == RADIOLIB_ERR_NONE) printk("pram loaded, version %u\n", pram_ver);
     else printk("err pram load %d (continuing without it)\n", ps);
   }
+#endif
   radio.setPacketReceivedAction(on_irq);
   if (apply_config() != RADIOLIB_ERR_NONE) printk("err initial config\n");
 
