@@ -55,6 +55,9 @@ public:
   uint8_t bwCode() const { return bandwidth; }
   uint8_t crCode() const { return codingRate; }
   uint8_t ldroCode() const { return ldrOptimize; }
+  // raw command access for the modems RadioLib does not wrap (wM-Bus)
+  int16_t cmdWrite(uint16_t op, const uint8_t* d, size_t n) { return SPIcommand(op, true, const_cast<uint8_t*>(d), n); }
+  int16_t cmdRead(uint16_t op, uint8_t* buf, size_t n) { return SPIcommand(op, false, buf, n); }
 };
 static Lr2021Radio radio(&mod);
 
@@ -345,10 +348,77 @@ static bool rng_exchange(int32_t* raw, uint8_t* rssi, uint32_t* irq_out) {
 
 static float rng_metres(int32_t raw) { return (float)raw * 150.0f / (4096.0f * (cfg.bw_hz / 1000000.0f)); }
 
+
+/* ---------- wM-Bus reception (EN 13757-4), the LR2021's own modem ----------
+ * The chip demodulates, decodes 3-of-6 / Manchester, detects frame format A/B
+ * and checks every CRC block; we get the telegram bytes and a status.
+ */
+static bool wmbus_mode = false;
+static uint8_t wmbus_chip_mode = 0;
+static uint32_t n_wmbus = 0;
+
+static int16_t wmbus_arm() {
+  radio.clearRxFifo();
+  radio.clearIrqState(RADIOLIB_LR2021_IRQ_ALL);
+  return radio.setRx(RADIOLIB_LR2021_RX_TIMEOUT_INF);
+}
+
+static int16_t wmbus_start(uint8_t mode, uint32_t freq_hz) {
+  radio.standby();
+  int16_t st = radio.setPacketType(RADIOLIB_LR2021_PACKET_TYPE_WM_BUS);
+  if (st == RADIOLIB_ERR_NONE) st = radio.setFrequency(freq_hz / 1000000.0f);
+  // SetWmbusParams: mode, rx_bw auto, format A (B is auto-detected), no address filter,
+  // max L-field 255, TX preamble 32 bits, RX preamble detect auto
+  uint8_t prm[8] = {mode, 0xFF, 0x00, 0x00, 0xFF, 0x00, 0x20, 0xFF};
+  if (st == RADIOLIB_ERR_NONE) st = radio.cmdWrite(0x026A, prm, sizeof(prm));
+  if (st == RADIOLIB_ERR_NONE) st = radio.setRxBoostedGainMode(cfg.boost);
+  if (st == RADIOLIB_ERR_NONE) st = radio.setDioIrqConfig(LR2021_IRQ_DIO,
+      RADIOLIB_LR2021_IRQ_RX_DONE | RADIOLIB_LR2021_IRQ_CRC_ERROR | RADIOLIB_LR2021_IRQ_LEN_ERROR | RADIOLIB_LR2021_IRQ_TIMEOUT);
+  if (st == RADIOLIB_ERR_NONE) st = wmbus_arm();
+  if (st != RADIOLIB_ERR_NONE) { printk("err wmbus start %d\n", st); return st; }
+  wmbus_mode = true; wmbus_chip_mode = mode;
+  return st;
+}
+
+static void wmbus_stop() {
+  wmbus_mode = false;
+  radio.standby();
+  radio.clearRxFifo(); radio.clearTxFifo();
+  radio.setPacketType(RADIOLIB_LR2021_PACKET_TYPE_LORA);
+  apply_config();
+}
+
+static void wmbus_service(uint32_t irq) {
+  if (!(irq & (RADIOLIB_LR2021_IRQ_RX_DONE | RADIOLIB_LR2021_IRQ_CRC_ERROR | RADIOLIB_LR2021_IRQ_LEN_ERROR | RADIOLIB_LR2021_IRQ_TIMEOUT))) return;
+  uint8_t stb[9] = {0};
+  radio.cmdRead(0x026D, stb, sizeof(stb));               // GetWmbusPacketStatus (parsed as Semtech's driver does)
+  unsigned lfield = stb[0];
+  unsigned len = ((unsigned)stb[1] << 8) | stb[2];
+  int rssi = -(int)stb[3];
+  uint32_t crcerr = ((uint32_t)stb[5] << 9) | ((uint32_t)stb[6] << 1) | ((stb[7] >> 6) & 1);
+  char fmt = ((stb[7] >> 7) & 1) ? 'B' : 'A';
+  unsigned lqi = stb[8];
+  static uint8_t buf[300];
+  if (len > sizeof(buf)) len = sizeof(buf);
+  if ((irq & RADIOLIB_LR2021_IRQ_RX_DONE) && len > 0) {
+    radio.readRadioRxFifo(buf, len);
+    static char hex[2 * 300 + 1];
+    for (unsigned i = 0; i < len; i++) snprintf(hex + 2 * i, 3, "%02x", buf[i]);
+    printk("wmbus rx: %s\n", hex);
+    printk("wmbus cfg: mode=%u fmt=%c lfield=%u len=%u rssi=%d lqi=%u crcerr=%08x time=%lld\n",
+           wmbus_chip_mode, fmt, lfield, len, rssi, lqi, crcerr, k_uptime_get());
+    n_wmbus++;
+  } else {
+    printk("wmbus err: irq=%08x len=%u rssi=%d crcerr=%08x\n", irq, len, rssi, crcerr);
+  }
+  wmbus_arm();
+}
+
 /* ---------- radio service: called on IRQ edge and as a periodic poll ---------- */
 static void service_radio() {
   uint32_t irq = radio.getIrqFlags();
   if (!irq) return;
+  if (wmbus_mode) { wmbus_service(irq); return; }
   if (rng_mode) {
     if (rng_subordinate && (irq & (RADIOLIB_LR2021_IRQ_RNG_RESP_DONE | RADIOLIB_LR2021_IRQ_RNG_REQ_DIS | RADIOLIB_LR2021_IRQ_TIMEOUT))) {
       printk("rng sub: irq=%08x %s\n", irq, (irq & RADIOLIB_LR2021_IRQ_RNG_RESP_DONE) ? "response sent" : "request discarded/timeout");
@@ -555,6 +625,22 @@ static void handle_line(char* line) {
     printk("err rng: unknown '%s'\n", tok);
     return;
   }
+  if (!strncmp(line, "wmbus", 5)) {
+    // wmbus <t|c|c2|s|r|n48> [freq_hz]   receive wireless M-Bus meters; wmbus off -> LoRa
+    char* tok = strtok(line + 5, " ");
+    if (!tok || !strcmp(tok, "off")) { wmbus_stop(); printk("ok wmbus off (%u telegrams)\n", n_wmbus); return; }
+    struct { const char* n; uint8_t mode; uint32_t f; } modes[] = {
+      {"t", 0x03, 868950000}, {"c", 0x05, 868950000}, {"c2", 0x07, 868950000}, {"s", 0x00, 868300000},
+      {"r", 0x04, 868330000}, {"n48", 0x08, 169406250}, {"t1", 0x01, 868950000}, {"t2rx", 0x02, 868950000},
+    };
+    for (auto& m : modes) if (!strcmp(tok, m.n)) {
+      char* f = strtok(nullptr, " "); uint32_t freq = f ? strtoul(f, nullptr, 10) : m.f;
+      if (wmbus_start(m.mode, freq) == RADIOLIB_ERR_NONE) printk("ok wmbus mode=%s (chip %u) freq=%u boost=%u\n", m.n, m.mode, freq, cfg.boost);
+      return;
+    }
+    printk("err wmbus: mode t|c|c2|s|r|n48|t1|t2rx|off\n");
+    return;
+  }
   if (!strncmp(line, "pa ", 3)) {   // raw SetPaConfig probe: pa <sel> <lfmode> <lfduty> <slices> <hfduty> [txpower]
     int a[6] = {0, 0, 6, 7, 16, 0}; int n = 0;
     for (char* t = strtok(line + 3, " "); t && n < 6; t = strtok(nullptr, " ")) a[n++] = atoi(t);
@@ -569,7 +655,7 @@ static void handle_line(char* line) {
   if (!strcmp(line, "rearm")) { printk("%s\n", arm_rx() == RADIOLIB_ERR_NONE ? "ok" : "err rearm"); return; }
   if (!strcmp(line, "reset")) { printk("ok rebooting\n"); k_msleep(50); sys_reboot(SYS_REBOOT_COLD); }
   if (!strcmp(line, "help") || !strcmp(line, "?")) {
-    printk("ok commands: tx <hex> | set freq= sf= bw= cr=<5..8|5li|6li|8li|6cc|8cc> sd=<sf,..|none> pwr= boost= sync= pre= | rng sub|req|delay|off | status | rearm | reset\n");
+    printk("ok commands: tx <hex> | set freq= sf= bw= cr=<5..8|5li|6li|8li|6cc|8cc> sd=<sf,..|none> pwr= boost= sync= pre= | rng sub|req|delay|off | wmbus <mode>|off | status | rearm | reset\n");
     return;
   }
   printk("err unknown command '%s'\n", line);

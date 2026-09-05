@@ -138,3 +138,23 @@ The long interleaver adds nothing against plain noise (it targets burst
 errors); the convolutional 4/8 code is worth about a decibel over standard
 4/8 at the same airtime, and 4/6 convolutional matches standard 4/8 at 25%
 less airtime.
+
+## Wireless M-Bus reception
+
+`wmbus t|c|c2|s|r|n48 [freq_hz]` switches the chip to its wM-Bus modem
+(EN 13757-4: T = 100 kcps 3-of-6 meter uplink and C = 100 kbps NRZ, both on
+868.95 MHz; S on 868.3 MHz; R on 868.33 MHz), `wmbus off` returns to LoRa.
+The chip demodulates, decodes 3-of-6 / Manchester, detects frame format A/B
+and checks every CRC block; the modem prints
+
+    wmbus rx: <hex>                 the telegram without the L-field
+    wmbus cfg: mode= fmt= lfield= len= rssi= lqi= crcerr=<bitfield> time=
+
+Only telegrams with `crcerr=00000000` are real: the 3-of-6 decoder syncs on
+noise around -112 dBm all the time and those show a failed header CRC.
+`tools/wmbus_decode.py <log>` tabulates manufacturer / serial / device type;
+for full readings prepend the L-field byte and use wmbusmeters, e.g.
+`wmbusmeters --analyze 3c<hex>` (3c = 60 bytes). First try in a Prague flat:
+15 minutes, three clean telegrams - an encrypted Apator water meter (T mode)
+and two Qundis radio converters relaying water meters in the clear (C mode,
+volumes, due-date values and timestamps readable).
