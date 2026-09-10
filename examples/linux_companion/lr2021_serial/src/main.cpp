@@ -13,7 +13,9 @@
  *   cfg: freq=... sf=... bw=... cr=... sd=<sf,..|none> pwr=<dBm> boost=<0..7> sync=<hex> pre=<n>
  *
  * Commands from the host (one per line):
- *   tx <hex>                  transmit a raw LoRa payload (<= 255 bytes) at the primary SF
+ *   tx [sf=N] <hex>           transmit a raw LoRa payload (<= 255 bytes); sf=N sends this one
+ *                             frame at another SF (answering a side-detector reception), then
+ *                             restores the configuration
  *   set k=v [k=v ...]         keys as in the cfg line; sd=8,9 sets side detectors (extra SFs
  *                             received in parallel on the same channel, must all be > sf)
  *   status | reset | help
@@ -466,26 +468,43 @@ static void service_radio() {
   // PREAMBLE_DETECTED / HEADER_VALID etc.: a packet is in flight, leave it alone.
 }
 
-static void do_tx(const uint8_t* data, int len) {
+// sf_over != 0 transmits this one frame at another spreading factor (a node heard
+// on a side detector is answered on its own SF), then puts the whole configuration
+// back: SetLoraModulationParams also drops the side detectors, so apply_config().
+static void do_tx(const uint8_t* data, int len, uint8_t sf_over = 0) {
   radio.standby();
+  bool over = sf_over && sf_over != cfg.sf;
+  uint8_t sf = over ? sf_over : cfg.sf;
+  if (over) {
+    int16_t st = radio.setSpreadingFactor(sf_over);
+    if (st == RADIOLIB_ERR_NONE) st = radio.setPreambleLength(sf_over <= 8 ? 32 : 16);   // MeshCore's rule
+    if (st == RADIOLIB_ERR_NONE && cfg.cr_code > 4)
+      st = radio.setLoRaModulationParams(radio.sfCode(), radio.bwCode(), cfg.cr_code, radio.ldroCode());
+    if (st != RADIOLIB_ERR_NONE) {
+      printk("tx err: sf%u override %d\n", sf_over, st);
+      n_tx_err++;
+      apply_config();
+      return;
+    }
+  }
   int64_t t0 = k_uptime_get();
   int16_t st = radio.startTransmit(data, len);
   if (st != RADIOLIB_ERR_NONE) {
     printk("tx err: start %d\n", st);
     n_tx_err++;
-    arm_rx();
+    if (over) apply_config(); else arm_rx();
     return;
   }
-  uint32_t limit = airtime_ms(len, cfg.sf, cfg.bw_hz, cfg.cr) * 2 + 1000;
+  uint32_t limit = airtime_ms(len, sf, cfg.bw_hz, cfg.cr) * 2 + 1000;
   bool done = false;
   while (k_uptime_get() - t0 < limit) {
     if (radio.getIrqFlags() & RADIOLIB_LR2021_IRQ_TX_DONE) { done = true; break; }
     k_msleep(1);
   }
   radio.finishTransmit();
-  if (done) { printk("tx done: len=%d ms=%lld\n", len, k_uptime_get() - t0); n_tx++; }
+  if (done) { printk("tx done: len=%d sf=%u ms=%lld\n", len, sf, k_uptime_get() - t0); n_tx++; }
   else      { printk("tx err: timeout after %u ms\n", limit); n_tx_err++; }
-  arm_rx();
+  if (over) apply_config(); else arm_rx();
 }
 
 /* ---------- command parsing ---------- */
@@ -535,10 +554,20 @@ static void handle_line(char* line) {
   if (!n) return;
 
   if (!strncmp(line, "tx ", 3)) {
+    // tx [sf=<5..12>] <hex>
     static uint8_t pkt[RADIOLIB_LR2021_MAX_PACKET_LENGTH];
-    int len = parse_hex(line + 3, pkt, sizeof(pkt));
+    const char* p = line + 3;
+    uint8_t sf_over = 0;
+    if (!strncmp(p, "sf=", 3)) {
+      sf_over = (uint8_t)atoi(p + 3);
+      if (sf_over < 5 || sf_over > 12) { printk("err tx: sf must be 5..12\n"); return; }
+      p = strchr(p, ' ');
+      if (!p) { printk("err tx: no hex payload\n"); return; }
+      p++;
+    }
+    int len = parse_hex(p, pkt, sizeof(pkt));
     if (len <= 0) { printk("err tx: no hex payload\n"); return; }
-    do_tx(pkt, len);
+    do_tx(pkt, len, sf_over);
     return;
   }
   if (!strncmp(line, "set ", 4) || !strcmp(line, "set")) {
@@ -655,7 +684,7 @@ static void handle_line(char* line) {
   if (!strcmp(line, "rearm")) { printk("%s\n", arm_rx() == RADIOLIB_ERR_NONE ? "ok" : "err rearm"); return; }
   if (!strcmp(line, "reset")) { printk("ok rebooting\n"); k_msleep(50); sys_reboot(SYS_REBOOT_COLD); }
   if (!strcmp(line, "help") || !strcmp(line, "?")) {
-    printk("ok commands: tx <hex> | set freq= sf= bw= cr=<5..8|5li|6li|8li|6cc|8cc> sd=<sf,..|none> pwr= boost= sync= pre= | rng sub|req|delay|off | wmbus <mode>|off | status | rearm | reset\n");
+    printk("ok commands: tx [sf=N] <hex> | set freq= sf= bw= cr=<5..8|5li|6li|8li|6cc|8cc> sd=<sf,..|none> pwr= boost= sync= pre= | rng sub|req|delay|off | wmbus <mode>|off | status | rearm | reset\n");
     return;
   }
   printk("err unknown command '%s'\n", line);

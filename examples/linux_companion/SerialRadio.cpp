@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <fcntl.h>
 #include <poll.h>
+#include <chrono>
 #include <termios.h>
 #include <unistd.h>
 
@@ -109,12 +110,15 @@ void SerialRadio::readerLoop() {
 // "tx done: ..." / "tx err: ..."; everything else is diagnostics.
 void SerialRadio::handleLine(char* line) {
   static float pending_snr = 0, pending_rssi = -120;
+  static uint8_t pending_sf = 0;
   static bool has_cfg = false;
   if (!strncmp(line, "rx cfg:", 7)) {
     const char* p = strstr(line, "snr=");
     pending_snr = p ? strtof(p + 4, nullptr) : 0.0f;
     p = strstr(line, "rssi=");
     pending_rssi = p ? strtof(p + 5, nullptr) : -120.0f;
+    p = strstr(line, " sf=");
+    pending_sf = p ? (uint8_t)atoi(p + 4) : 0;
     has_cfg = true;
     fprintf(stderr, "%s\n", line);      // packet log: the same lines lora_rx prints, so
   } else if (!strncmp(line, "rx ok: ", 7)) {
@@ -128,7 +132,7 @@ void SerialRadio::handleLine(char* line) {
     if (!pkt.empty()) {
       std::lock_guard<std::mutex> lk(_mtx);
       _rx.push_back(RxPacket{std::move(pkt), has_cfg ? pending_snr : 0.0f,
-                             has_cfg ? pending_rssi : -120.0f});
+                             has_cfg ? pending_rssi : -120.0f, has_cfg ? pending_sf : (uint8_t)0});
       _n_recv++;
       if (_rx.size() > 256) _rx.pop_front();
     }
@@ -199,14 +203,88 @@ int SerialRadio::recvRaw(uint8_t* bytes, int sz) {
   _rx.pop_front();
   _last_snr = pkt.snr;                // published with its packet (see SdrRadio)
   _last_rssi = pkt.rssi;
+  noteRxSf(pkt.bytes, pkt.sf);
   int n = (int)std::min<size_t>(pkt.bytes.size(), (size_t)sz);
   memcpy(bytes, pkt.bytes.data(), n);
   return n;
 }
 
+// ---- multi-SF replies -------------------------------------------------------
+// Wire layout (Packet::readFrom): header, [4 transport bytes for route types 0
+// and 3], path_len (bits 6-7: hash size - 1, bits 0-5: hop count), path, payload.
+// For REQ/RESPONSE/TXT_MSG/PATH the payload starts with dest_hash, src_hash; an
+// ADVERT starts with the sender's public key; ANON_REQ with dest_hash then the
+// sender's key. Only the first byte of each hash is used here: this is a
+// routing hint, MyMesh still does the real matching.
+static bool payloadStart(const uint8_t* b, int len, int& off, uint8_t& type, uint8_t& route) {
+  if (len < 3) return false;
+  route = b[0] & 0x03;
+  type = (b[0] >> 2) & 0x0F;
+  int i = 1 + ((route == 0 || route == 3) ? 4 : 0);
+  if (i >= len) return false;
+  uint8_t pl = b[i++];
+  i += ((pl >> 6) + 1) * (pl & 63);
+  if (i >= len) return false;
+  off = i;
+  return true;
+}
+static int64_t nowMs() {
+  return std::chrono::duration_cast<std::chrono::milliseconds>(
+      std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+void SerialRadio::noteRxSf(const std::vector<uint8_t>& pkt, uint8_t sf) {
+  int primary; { std::lock_guard<std::mutex> lk(_cfg_mtx); primary = _cfg.sf; }
+  int64_t now = nowMs();
+  if (sf && sf != primary) { _last_side_sf = sf; _last_side_ms = now; }
+  int off; uint8_t type, route;
+  if (!payloadStart(pkt.data(), (int)pkt.size(), off, type, route)) return;
+  int src = -1;
+  switch (type) {
+    case 0x00: case 0x01: case 0x02: case 0x08:          // REQ, RESPONSE, TXT_MSG, PATH: dest, src
+      if (off + 1 < (int)pkt.size()) src = pkt[off + 1]; break;
+    case 0x04:                                           // ADVERT: pub key
+      src = pkt[off]; break;
+    case 0x07:                                           // ANON_REQ: dest, pub key
+      if (off + 1 < (int)pkt.size()) src = pkt[off + 1]; break;
+    default: break;
+  }
+  if (src < 0) return;
+  _sf_by_hash[src] = (sf && sf != primary) ? sf : 0;      // back on the primary = forget
+  _sf_ms[src] = now;
+}
+
+uint8_t SerialRadio::pickTxSf(const uint8_t* bytes, int len, const char** why) {
+  static const int64_t REPLY_WINDOW_MS = 3000, CONTACT_TTL_MS = 30 * 60 * 1000;
+  int primary; { std::lock_guard<std::mutex> lk(_cfg_mtx); primary = _cfg.sf; }
+  int64_t now = nowMs();
+  int off; uint8_t type, route;
+  *why = nullptr;
+  if (!payloadStart(bytes, len, off, type, route)) return 0;
+  if (type == 0x03) {                                    // ACK: no address, answer the last side-SF packet
+    if (_last_side_sf && now - _last_side_ms < REPLY_WINDOW_MS) { *why = "ack after side-SF rx"; return _last_side_sf; }
+    return 0;
+  }
+  int dest = -1;
+  switch (type) {
+    case 0x00: case 0x01: case 0x02: case 0x07: case 0x08: dest = bytes[off]; break;   // dest hash first
+    default: break;
+  }
+  if (dest < 0) return 0;                                // adverts, group, control: primary
+  uint8_t sf = _sf_by_hash[dest];
+  if (sf && sf != primary && now - _sf_ms[dest] < CONTACT_TTL_MS) { *why = "contact last heard on this SF"; return sf; }
+  return 0;
+}
+
 bool SerialRadio::startSendRaw(const uint8_t* bytes, int len) {
   if (len <= 0 || len > 255) return false;
+  const char* why = nullptr;
+  uint8_t sf = pickTxSf(bytes, len, &why);
   std::string line = "tx ";
+  if (sf) {
+    line += "sf=" + std::to_string(sf) + " ";
+    fprintf(stderr, "[serial] tx at sf%u: %s\n", sf, why);
+  }
   char hx[3];
   for (int i = 0; i < len; i++) { snprintf(hx, sizeof(hx), "%02x", bytes[i]); line += hx; }
   std::unique_lock<std::mutex> lk(_tx_mtx);

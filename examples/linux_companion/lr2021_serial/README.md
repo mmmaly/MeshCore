@@ -30,7 +30,7 @@ Firmware → host, one line each:
 | `rx cfg: freq=<Hz> sf=<n> bw=<Hz> cr=<5..8> snr=<dB> rssi=<dBm> det=<i> len=<n> time=<ms>` | a packet arrived; `sf` is the SF it was actually received on, `det` which detector caught it (0 = primary) |
 | `rx ok: <hex>` | its CRC-valid payload (always right after `rx cfg:`, the same contract as `lora_rx`) |
 | `rx err: ...` | a failed reception (header/CRC), for statistics |
-| `tx done: len=<n> ms=<n>` / `tx err: <why>` | result of a `tx` |
+| `tx done: len=<n> sf=<n> ms=<n>` / `tx err: <why>` | result of a `tx` |
 | `ok [cfg: ...]` / `err <why>` | reply to a command |
 | `cfg: freq=... sf=... bw=... cr=... sd=... pwr=... boost=... sync=... pre=...` | current configuration |
 
@@ -38,7 +38,7 @@ Host → firmware:
 
 | Command | Effect |
 |---|---|
-| `tx <hex>` | transmit a raw LoRa frame (≤ 255 bytes) at the primary SF; blocks until `tx done` |
+| `tx [sf=N] <hex>` | transmit a raw LoRa frame (≤ 255 bytes); blocks until `tx done`. `sf=N` sends this one frame at another SF (a node heard on a side detector is answered on its own SF, preamble 32 symbols up to SF8, 16 above), then the full configuration incl. the side detectors is re-applied |
 | `set k=v [k=v ...]` | any of `freq` (Hz), `sf`, `bw` (Hz), `cr` (5..8, or 1..4), `sd` (side-detector SFs, e.g. `8,9`, or `none`), `pwr` (dBm, −9..22), `boost` (RX boosted gain 0..7), `sync` (hex), `pre` (preamble symbols) |
 | `status` | config plus counters (`rx`, `rx_err`, `tx`, `tx_err`), uptime, chip version |
 | `rearm` / `reset` / `help` | re-arm the receiver / reboot / list commands |

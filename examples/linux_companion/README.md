@@ -106,7 +106,17 @@ LORA_FREQ=869.432 LORA_SF=7 sh examples/linux_companion/build.sh
 `--side-sfs` lists extra spreading factors the LR2021 receives *in parallel*
 on the node's channel (hardware side detectors; all must be above the node's
 SF and within +4 of it — the invalid ones are dropped when the app changes
-the SF). `setParams` from the app retunes the modem live; the app's TX power
+the SF). A node heard on a side detector is answered on *its* SF: every
+received packet is tagged with the SF it arrived on, the backend remembers
+the last SF per source hash (30 min) and the time of the last side-SF
+reception, and picks the SF per outgoing frame — acks within 3 s of a
+side-SF reception and addressed packets (text, path, request, response)
+to a contact last heard on a side SF go out with `tx sf=N`; floods,
+adverts and control packets stay on the primary. So an SF8 node next to
+an SF7 node with `--side-sfs 8` gets its messages acknowledged and can be
+messaged, while the SF7 mesh is untouched (verified 2026-09-11 with the
+Zephyr companion on SF8, both directions). Overrides are logged as
+`[serial] tx at sf8: <reason>`. `setParams` from the app retunes the modem live; the app's TX power
 and "RX boosted gain" settings map onto the chip's PA (−9..+22 dBm,
 `MAX_LORA_TX_POWER` in `build.sh`) and boosted-gain level. The port is
 reopened and reconfigured after a USB glitch.

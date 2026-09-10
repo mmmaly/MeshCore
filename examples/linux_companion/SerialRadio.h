@@ -40,7 +40,7 @@ public:
   void stop();
 
   int recvRaw(uint8_t* bytes, int sz) override;
-  bool startSendRaw(const uint8_t* bytes, int len) override;
+  bool startSendRaw(const uint8_t* bytes, int len) override;   // picks the SF per frame
   bool isSendComplete() override { return true; }   // startSendRaw waits for "tx done"
   void onSendFinished() override {}
   bool isInRecvMode() const override { return true; }
@@ -72,7 +72,17 @@ private:
   struct RxPacket {
     std::vector<uint8_t> bytes;
     float snr, rssi;
+    uint8_t sf;                       // SF the packet arrived on (a side detector's, or the primary)
   };
+
+  // Multi-SF replies: a node heard on a side detector gets answered on its own
+  // SF ("tx sf=N" to the modem), everything else goes out on the primary.
+  void noteRxSf(const std::vector<uint8_t>& pkt, uint8_t sf);
+  uint8_t pickTxSf(const uint8_t* bytes, int len, const char** why);
+  uint8_t _sf_by_hash[256] = {0};     // last SF a source hash was heard on (0 = never / primary)
+  int64_t _sf_ms[256] = {0};
+  uint8_t _last_side_sf = 0;          // most recent side-detector reception, for replies
+  int64_t _last_side_ms = 0;
 
   Config _cfg;
   mutable std::mutex _cfg_mtx;
