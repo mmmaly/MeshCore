@@ -55,6 +55,33 @@ Default band is **sub-GHz (869.618 MHz / 62.5 kHz / SF8 / CR5)**. For the **2.4 
 west build -b xiao_nrf54l15/nrf54l15/cpuapp -d build . --pristine -- -DMC_BAND_2G4=ON
 ```
 
+### Side detectors and replies on the neighbour's SF
+
+The LR2021 can demodulate up to three extra spreading factors in parallel on
+the node's channel (all above the primary SF and within +4 of it). Build with
+
+```
+west build ... -- -DMC_SIDE_SFS=8,9,11      # default "8"; "" disables
+```
+
+and the node also hears SF8/SF9/SF11 nodes on its SF7 channel. A node heard
+on a side detector is answered on *its* SF (`src/helpers/MultiSfMemory.h`,
+shared with the Linux host node): every received frame is attributed to the
+node that transmitted it (last hash of a flood path, else the sender; 2-byte
+keys from adverts and 2-byte paths), and outgoing acks and addressed frames to
+such a node go out on that SF for one frame, after which the primary SF,
+preamble and side detectors are restored. Floods, adverts and control packets
+stay on the primary, so the mesh is unaffected; an SF11 client next to an SF7
+repeater built this way gets a bridge into the mesh but must use the same
+frequency and bandwidth (the stock SF11 presets use another channel).
+Console lines: `LR2021: rx on side SF8`, `LR2021: tx at SF8 (...)`.
+
+With `MC_LOW_POWER` the duty-cycled receiver needs a sniff window long enough
+for the slowest side SF to lock, which raises the on-time (side SF8 on SF7:
+~45 % instead of ~25 %) and still catches only about 3 of 5 side-SF frames;
+the always-on build catches them all. Set `MC_SIDE_SFS=""` on a battery node
+that does not need it.
+
 `MC_BAND_2G4` only sets the **first-boot** band; the running band/SF/BW/CR is also stored in prefs
 and can be changed live from the app (`CMD_SET_RADIO_PARAMS`); and that choice now persists across
 reboots. Two nodes must be on the same band to hear each other.
