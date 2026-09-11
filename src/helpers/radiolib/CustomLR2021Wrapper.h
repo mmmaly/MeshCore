@@ -24,6 +24,15 @@ public:
   // Airtime estimates (Dispatcher sets its TX timeout from this BEFORE the frame
   // reaches startSendRaw): assume the highest SF an override could pick.
   uint8_t getSpreadingFactor() const override { return _tx_sf ? _tx_sf : _sfmem.maxLiveSf(_cur_sf, millis()); }
+  // Dispatcher's TX timeout is 1.5x this, computed from the chip's CURRENT modulation
+  // before the override is applied: scale for the highest SF an override could pick
+  // (each SF step doubles the symbol time) plus the longer preamble.
+  uint32_t getEstAirtimeFor(int len_bytes) override {
+    uint32_t est = RadioLibWrapper::getEstAirtimeFor(len_bytes);
+    uint8_t m = _sfmem.maxLiveSf(_cur_sf, millis());
+    if (m > _cur_sf) { est <<= (m - _cur_sf); est += est / 3; }
+    return est;
+  }
 
   int recvRaw(uint8_t* bytes, int sz) override {
     int len = RadioLibWrapper::recvRaw(bytes, sz);

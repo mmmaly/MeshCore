@@ -155,7 +155,16 @@ public:
                         this->invertIQEnabled);
     if (lowPower) {
       uint16_t pre = lpSenderPreamble > this->preambleLengthLoRa ? this->preambleLengthLoRa : lpSenderPreamble;
-      return LR2021::startReceiveDutyCycleAuto(pre, lpMinSymbols);
+      // The sniff window is sized in primary-SF symbols; a side detector needs the
+      // same number of ITS (longer) symbols to lock, so widen the window by the SF
+      // gap. Costs duty cycle: with side SF8 on an SF7 node the chip listens ~60%
+      // of the time instead of ~25% (build with MC_SIDE_SFS="" to keep the old cycle).
+      uint8_t maxSide = 0;
+      for (int i = 0; i < nSide; i++) if (sideSfs[i] > _sf && sideSfs[i] <= _sf + 4 && sideSfs[i] > maxSide) maxSide = sideSfs[i];
+      uint16_t minSym = lpMinSymbols;
+      if (maxSide > _sf) minSym <<= (maxSide - _sf);
+      if (minSym * 2 >= pre) minSym = pre / 2 - 1;      // keep a sleep phase
+      return LR2021::startReceiveDutyCycleAuto(pre, minSym);
     }
     return LR2021::startReceive();
   }
