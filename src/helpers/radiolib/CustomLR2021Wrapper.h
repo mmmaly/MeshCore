@@ -21,7 +21,9 @@ public:
   uint8_t _cur_sf = LORA_SF;
   uint8_t _tx_sf = 0;
   void setCurrentSf(uint8_t sf) { _cur_sf = sf; }
-  uint8_t getSpreadingFactor() const override { return _tx_sf ? _tx_sf : _cur_sf; }   // airtime estimates
+  // Airtime estimates (Dispatcher sets its TX timeout from this BEFORE the frame
+  // reaches startSendRaw): assume the highest SF an override could pick.
+  uint8_t getSpreadingFactor() const override { return _tx_sf ? _tx_sf : _sfmem.maxLiveSf(_cur_sf, millis()); }
 
   int recvRaw(uint8_t* bytes, int sz) override {
     int len = RadioLibWrapper::recvRaw(bytes, sz);

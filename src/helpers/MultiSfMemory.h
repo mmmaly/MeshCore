@@ -84,6 +84,17 @@ public:
     return e ? e->sf : 0;
   }
 
+
+  // Highest SF a transmission might currently be sent on (the primary, or any
+  // side SF still remembered): lets airtime estimates and TX timeouts cover an
+  // override that is decided only when the frame is handed to the radio.
+  uint8_t maxLiveSf(uint8_t primary, uint32_t now) const {
+    uint8_t m = primary;
+    if (_have_side && now - _last_side_ms < reply_window_ms && _last_side_sf > m) m = _last_side_sf;
+    for (const Entry& e : _e) if (e.used && e.sf > m && now - e.ms < ttl_ms) m = e.sf;
+    return m;
+  }
+
 private:
   enum { MAX_ENTRIES = 32 };
   struct Entry { uint16_t id; uint8_t idlen; uint8_t sf; uint32_t ms; bool used; };
