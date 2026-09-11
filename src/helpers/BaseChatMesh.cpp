@@ -191,6 +191,8 @@ int BaseChatMesh::searchPeersByHash(const uint8_t* hash) {
   for (int i = 0; i < num_contacts && n < MAX_SEARCH_RESULTS; i++) {
     if (contacts[i].id.isHashMatch(hash)) {
       matching_peer_indexes[n++] = i;  // store the INDEXES of matching contacts (for subsequent 'peer' methods)
+      MESH_DEBUG_PRINTLN("  peer candidate for hash %02X: '%s' key %02X%02X%02X%02X", (uint32_t)hash[0], contacts[i].name,
+                         contacts[i].id.pub_key[0], contacts[i].id.pub_key[1], contacts[i].id.pub_key[2], contacts[i].id.pub_key[3]);
     }
   }
   return n;

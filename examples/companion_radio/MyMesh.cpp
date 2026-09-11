@@ -1268,6 +1268,8 @@ void MyMesh::handleCmdFrame(size_t len) {
     uint8_t *pub_key = &cmd_frame[1];
     ContactInfo *recipient = lookupContactByPubKey(pub_key, PUB_KEY_SIZE);
     uint32_t last_mod = getRTCClock()->getCurrentTime();  // fallback value if not present in cmd_frame
+    MESH_DEBUG_PRINTLN("app %s contact key %02X%02X%02X%02X", recipient ? "updates" : "adds",
+                       pub_key[0], pub_key[1], pub_key[2], pub_key[3]);
     if (recipient) {
       updateContactFromFrame(*recipient, last_mod, cmd_frame, len);
       recipient->lastmod = last_mod;
@@ -1287,6 +1289,7 @@ void MyMesh::handleCmdFrame(size_t len) {
     }
   } else if (cmd_frame[0] == CMD_REMOVE_CONTACT) {
     uint8_t *pub_key = &cmd_frame[1];
+    MESH_DEBUG_PRINTLN("app removes contact key %02X%02X%02X%02X", pub_key[0], pub_key[1], pub_key[2], pub_key[3]);
     ContactInfo *recipient = lookupContactByPubKey(pub_key, PUB_KEY_SIZE);
     if (recipient && removeContact(*recipient)) {
       _store->deleteBlobByKey(pub_key, PUB_KEY_SIZE);
