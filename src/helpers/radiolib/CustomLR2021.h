@@ -88,8 +88,11 @@ public:
       while (*c && (*c < '0' || *c > '9')) c++;
     }
   }
-  int16_t setBandwidth(float bw) override { _bw_khz = bw; return LR2021::setBandwidth(bw); }
-  int16_t setSpreadingFactor(uint8_t sf, bool legacy = false) override { _sf = sf; return LR2021::setSpreadingFactor(sf, legacy); }
+  // not virtual in RadioLib: these hide the base setters for callers that use the
+  // CustomLR2021 type (the wrapper and target.cpp); begin() bypasses them, so the
+  // bring-up code seeds _sf/_bw_khz itself
+  int16_t setBandwidth(float bw) { _bw_khz = bw; return LR2021::setBandwidth(bw); }
+  int16_t setSpreadingFactor(uint8_t sf, bool legacy = false) { _sf = sf; return LR2021::setSpreadingFactor(sf, legacy); }
   int16_t applySideDetectors() {
     LR2021LoRaSideDetector_t sd[3];
     size_t n = 0;

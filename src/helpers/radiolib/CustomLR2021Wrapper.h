@@ -51,6 +51,7 @@ public:
   void onSendFinished() override {
     RadioLibWrapper::onSendFinished();
     if (_tx_sf) restoreAfterOverride();
+    _radio->setPreambleLength(16);  // overcomes weird issues with small and big pkts
   }
   void restoreAfterOverride() {
     CustomLR2021* r = (CustomLR2021 *)_radio;
@@ -107,11 +108,6 @@ public:
     float rssi = -110;
     ((CustomLR2021 *)_radio)->getRssiInst(&rssi);
     return rssi;
-  }
-
-  void onSendFinished() override {
-    RadioLibWrapper::onSendFinished();
-    _radio->setPreambleLength(16);  // overcomes weird issues with small and big pkts
   }
 
   float getLastRSSI() const override { return ((CustomLR2021 *)_radio)->getRSSI(); }

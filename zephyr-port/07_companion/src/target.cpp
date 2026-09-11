@@ -72,6 +72,7 @@ static bool radio_bringup(float freq, float bw, uint8_t sf, uint8_t cr)
 			s_lora.explicitHeader();
 			s_lora.setCRC(2);
 			s_lora.setRxBoostedGainMode(LR2021_RX_BOOST_LEVEL);
+			s_lora._sf = sf; s_lora._bw_khz = bw;     /* begin() bypassed the recording setters */
 			int16_t sd = s_lora.applySideDetectors();
 			printk("radio: side detectors %u of %u applied (%d)\n", s_lora.appliedSideCount(), s_lora.nSide, sd);
 			int16_t rx = s_lora.startReceive();      /* the operation that fails on a bad boot */
