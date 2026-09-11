@@ -155,16 +155,19 @@ public:
                         this->invertIQEnabled);
     if (lowPower) {
       uint16_t pre = lpSenderPreamble > this->preambleLengthLoRa ? this->preambleLengthLoRa : lpSenderPreamble;
-      // The sniff window is sized in primary-SF symbols; a side detector needs the
-      // same number of ITS (longer) symbols to lock, so widen the window by the SF
-      // gap. Costs duty cycle: with side SF8 on an SF7 node the chip listens ~60%
-      // of the time instead of ~25% (build with MC_SIDE_SFS="" to keep the old cycle).
       uint8_t maxSide = 0;
       for (int i = 0; i < nSide; i++) if (sideSfs[i] > _sf && sideSfs[i] <= _sf + 4 && sideSfs[i] > maxSide) maxSide = sideSfs[i];
-      uint16_t minSym = lpMinSymbols;
-      if (maxSide > _sf) minSym <<= (maxSide - _sf);
-      if (minSym * 2 >= pre) minSym = pre / 2 - 1;      // keep a sleep phase
-      return LR2021::startReceiveDutyCycleAuto(pre, minSym);
+      if (!maxSide) return LR2021::startReceiveDutyCycleAuto(pre, lpMinSymbols);
+      // With side detectors the sniff window must hold enough symbols of the SLOWEST
+      // side SF for that detector to lock (10 of them), while the sleep phase stays
+      // short enough that a primary-SF preamble (pre symbols) still overlaps a window
+      // by >= 8 primary symbols. Side SF8 on SF7: window 41 ms, sleep 49 ms (45% on
+      // instead of ~25%); build with MC_SIDE_SFS="" for the plain cycle.
+      float tsym_p_us = 1000.0f * (float)(1u << _sf) / _bw_khz;
+      float tsym_s_us = 1000.0f * (float)(1u << maxSide) / _bw_khz;
+      uint32_t rx_us = (uint32_t)(10.0f * tsym_s_us);
+      uint32_t sleep_us = (uint32_t)((float)(pre > 8 ? pre - 8 : 1) * tsym_p_us);
+      return LR2021::startReceiveDutyCycle(rx_us, sleep_us);
     }
     return LR2021::startReceive();
   }
