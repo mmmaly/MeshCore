@@ -66,6 +66,11 @@ target_compile_definitions(app PRIVATE
 # the node on 2.4 GHz for the over-the-air RF test (the choice then persists in prefs).
 option(MC_BAND_2G4 "Boot on the 2.4 GHz LoRa preset instead of sub-GHz" OFF)
 option(MC_LOW_POWER "Battery build: LR2021 RX duty cycling + sleepy main loop" OFF)
+# Side detectors: extra spreading factors the LR2021 receives in parallel on the node's
+# channel (comma list, all above the primary SF and within +4; invalid ones are skipped
+# when the app changes the SF). A node heard on a side SF is answered on that SF.
+set(MC_SIDE_SFS "8" CACHE STRING "LR2021 side-detector SFs, e.g. 8,9,11 (empty = none)")
+target_compile_definitions(app PRIVATE MC_SIDE_SFS="${MC_SIDE_SFS}")
 if(MC_LOW_POWER)
   target_compile_definitions(app PRIVATE MC_LOW_POWER=1)
 endif()

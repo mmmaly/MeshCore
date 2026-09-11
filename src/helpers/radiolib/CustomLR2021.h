@@ -69,7 +69,61 @@ public:
   }
 #endif  // ARDUINO
 
+  // Side detectors: extra SFs received in parallel on the same channel (all above
+  // the primary SF and within +4 of it, same bandwidth, own LDRO). Any
+  // SetLoraModulationParams (setSpreadingFactor/setBandwidth/...) clears them in
+  // the chip, so applySideDetectors() is called after every parameter change.
+  uint8_t sideSfs[3] = {0, 0, 0};
+  uint8_t nSide = 0;
+  float _bw_khz = LORA_BW;
+  uint8_t _sf = LORA_SF;
+  uint8_t _last_det = 0;
+
+  void setSideSfs(const char* list) {        // "8,9,11" / "" (parsed at boot from MC_SIDE_SFS)
+    nSide = 0;
+    for (const char* c = list; c && *c && nSide < 3; ) {
+      int v = 0;
+      while (*c >= '0' && *c <= '9') v = v * 10 + (*c++ - '0');
+      if (v) sideSfs[nSide++] = (uint8_t)v;
+      while (*c && (*c < '0' || *c > '9')) c++;
+    }
+  }
+  int16_t setBandwidth(float bw) override { _bw_khz = bw; return LR2021::setBandwidth(bw); }
+  int16_t setSpreadingFactor(uint8_t sf, bool legacy = false) override { _sf = sf; return LR2021::setSpreadingFactor(sf, legacy); }
+  int16_t applySideDetectors() {
+    LR2021LoRaSideDetector_t sd[3];
+    size_t n = 0;
+    for (int i = 0; i < nSide; i++) {
+      uint8_t sf = sideSfs[i];
+      if (sf <= _sf || sf > _sf + 4 || sf > 12) continue;   // chip rule; the primary decides what's valid
+      sd[n].sf = sf;
+      sd[n].ldro = ((float)(1u << sf) / _bw_khz) >= 16.0f;   // symbol time >= 16 ms
+      sd[n].invertIQ = false;
+      sd[n].syncWord = RADIOLIB_LR2021_LORA_SYNC_WORD_PRIVATE;
+      n++;
+    }
+    _applied_side = n;
+    return setSideDetector(n ? sd : nullptr, n);
+  }
+  uint8_t appliedSideCount() const { return _applied_side; }
+  // SF the last packet was received on, 0 = the primary demodulator
+  uint8_t lastRxSf() const {
+    if (_last_det < 1 || _last_det > _applied_side) return 0;
+    uint8_t k = 0;
+    for (int i = 0; i < nSide; i++) {                        // k-th valid side SF, in list order
+      uint8_t sf = sideSfs[i];
+      if (sf <= _sf || sf > _sf + 4 || sf > 12) continue;
+      if (++k == _last_det) return sf;
+    }
+    return 0;
+  }
+  uint8_t _applied_side = 0;
+
   size_t getPacketLength(bool update) override {
+    // recvRaw() asks this right before readData(): grab the packet status now,
+    // including which (side) detector delivered the frame
+    { uint8_t cr = 0, det = 0; bool crc = false;
+      if (getLoRaPacketStatus(&cr, &crc, NULL, NULL, NULL, NULL, &det) == RADIOLIB_ERR_NONE) _last_det = det; }
     size_t len = LR2021::getPacketLength(update);
     if (len == 0 && (getIrqFlags() & RADIOLIB_LR2021_IRQ_LORA_HDR_CRC_ERROR)) {
       // corrupted header: return to a known-good state; recvRaw restarts RX

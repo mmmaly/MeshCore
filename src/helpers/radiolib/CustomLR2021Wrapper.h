@@ -1,6 +1,7 @@
 #pragma once
 
 #include "CustomLR2021.h"
+#include "../MultiSfMemory.h"
 #include "RadioLibWrappers.h"
 
 // MeshCore wrapper for the LR2021. Implements the RadioLibWrapper hooks the mesh
@@ -13,12 +14,61 @@ public:
   CustomLR2021Wrapper(CustomLR2021& radio, mesh::MainBoard& board)
     : RadioLibWrapper(radio, board) { }
 
+  // Multi-SF: a neighbour heard on a side detector is answered on its own SF
+  // (see MultiSfMemory.h). One frame at a time: the override is programmed
+  // right before startTransmit() and undone in onSendFinished().
+  MultiSfMemory _sfmem;
+  uint8_t _cur_sf = LORA_SF;
+  uint8_t _tx_sf = 0;
+  void setCurrentSf(uint8_t sf) { _cur_sf = sf; }
+  uint8_t getSpreadingFactor() const override { return _tx_sf ? _tx_sf : _cur_sf; }   // airtime estimates
+
+  int recvRaw(uint8_t* bytes, int sz) override {
+    int len = RadioLibWrapper::recvRaw(bytes, sz);
+    if (len > 0) {
+      uint8_t sf = ((CustomLR2021 *)_radio)->lastRxSf();
+      if (sf) MESH_DEBUG_PRINTLN("LR2021: rx on side SF%u", sf);
+      _sfmem.noteRx(bytes, len, sf ? sf : _cur_sf, _cur_sf, millis());
+    }
+    return len;
+  }
+  bool startSendRaw(const uint8_t* bytes, int len) override {
+    CustomLR2021* r = (CustomLR2021 *)_radio;
+    const char* why = "";
+    uint8_t sf = _sfmem.pickTx(bytes, len, _cur_sf, millis(), &why);
+    if (sf && sf != _cur_sf) {
+      r->standby();
+      if (r->setSpreadingFactor(sf) == RADIOLIB_ERR_NONE) {
+        r->setPreambleLength(preambleLengthForSF(sf));
+        _tx_sf = sf;
+        MESH_DEBUG_PRINTLN("LR2021: tx at SF%u (%s)", sf, why);
+      }
+    }
+    bool ok = RadioLibWrapper::startSendRaw(bytes, len);
+    if (!ok && _tx_sf) restoreAfterOverride();
+    return ok;
+  }
+  void onSendFinished() override {
+    RadioLibWrapper::onSendFinished();
+    if (_tx_sf) restoreAfterOverride();
+  }
+  void restoreAfterOverride() {
+    CustomLR2021* r = (CustomLR2021 *)_radio;
+    r->standby();
+    r->setSpreadingFactor(_cur_sf);
+    r->setPreambleLength(preambleLengthForSF(_cur_sf));
+    r->applySideDetectors();
+    _tx_sf = 0;
+  }
+
   void setParams(float freq, float bw, uint8_t sf, uint8_t cr) override {
     CustomLR2021* r = (CustomLR2021 *)_radio;
     r->setFrequency(freq);
     r->setSpreadingFactor(sf);
     r->setBandwidth(bw);
     r->setCodingRate(cr);
+    r->applySideDetectors();
+    _cur_sf = sf;
     // A band change (sub-GHz <-> 2.4 GHz) needs the RX front-end path and the PA
     // re-selected; RadioLib only does that through these two calls.
     r->setRxBoostedGainMode(r->getRxBoostLevel());

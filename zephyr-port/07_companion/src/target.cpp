@@ -72,6 +72,8 @@ static bool radio_bringup(float freq, float bw, uint8_t sf, uint8_t cr)
 			s_lora.explicitHeader();
 			s_lora.setCRC(2);
 			s_lora.setRxBoostedGainMode(LR2021_RX_BOOST_LEVEL);
+			int16_t sd = s_lora.applySideDetectors();
+			printk("radio: side detectors %u of %u applied (%d)\n", s_lora.appliedSideCount(), s_lora.nSide, sd);
 			int16_t rx = s_lora.startReceive();      /* the operation that fails on a bad boot */
 			if (rx == RADIOLIB_ERR_NONE) {
 				s_lora.standby();                /* idle; the wrapper arms RX in its loop */
@@ -94,6 +96,9 @@ bool radio_init()
 {
 	s_lora.setIrqDio(LR2021_IRQ_DIO);
 	s_lora.setPaTable(wio_pa_lf, false);   /* before begin(): setOutputPower() reads it */
+#ifdef MC_SIDE_SFS
+	s_lora.setSideSfs(MC_SIDE_SFS);        /* extra SFs received in parallel (build option) */
+#endif
 	s_freq = LORA_FREQ;
 	s_req_dbm = LORA_TX_POWER;
 	if (!radio_bringup(LORA_FREQ, LORA_BW, LORA_SF, LORA_CR)) return false;
@@ -112,6 +117,8 @@ void radio_set_params(float freq, float bw, uint8_t sf, uint8_t cr)
 	if (st == RADIOLIB_ERR_NONE) st = s_lora.setBandwidth(bw);
 	if (st == RADIOLIB_ERR_NONE) st = s_lora.setSpreadingFactor(sf);
 	if (st == RADIOLIB_ERR_NONE) st = s_lora.setCodingRate(cr);
+	if (st == RADIOLIB_ERR_NONE) st = s_lora.applySideDetectors();   /* cleared by the setters above */
+	s_radio.setCurrentSf(sf);
 	s_freq = freq;
 	if (band_changed) s_lora.setOutputPower(clamp_tx_for_band(freq, s_req_dbm));
 	s_radio.begin();   /* reset wrapper -> dispatcher re-arms RX (startReceive) on the new config */
