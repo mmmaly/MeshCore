@@ -106,13 +106,17 @@ LORA_FREQ=869.432 LORA_SF=7 sh examples/linux_companion/build.sh
 `--side-sfs` lists extra spreading factors the LR2021 receives *in parallel*
 on the node's channel (hardware side detectors; all must be above the node's
 SF and within +4 of it — the invalid ones are dropped when the app changes
-the SF). A node heard on a side detector is answered on *its* SF: every
-received packet is tagged with the SF it arrived on, the backend remembers
-the last SF per source hash (30 min) and the time of the last side-SF
-reception, and picks the SF per outgoing frame — acks within 3 s of a
-side-SF reception and addressed packets (text, path, request, response)
-to a contact last heard on a side SF go out with `tx sf=N`; floods,
-adverts and control packets stay on the primary. So an SF8 node next to
+the SF). A node heard on a side detector is answered on *its* SF
+(`src/helpers/MultiSfMemory.h`, shared with the Zephyr port): every
+received packet is tagged with the SF it arrived on and attributed to the
+node that transmitted it — the last hash of a flood path, or the sender
+for zero-hop packets (two-byte keys from adverts and 2-byte paths, one byte
+otherwise) — and kept for 30 min. Outgoing frames are matched against the
+node that receives them next (first hop of a direct route, else the
+destination hash): acks within 3 s of a side-SF reception and addressed
+packets (text, path, request, response) to a node last heard on a side SF
+go out with `tx sf=N`; floods, adverts and control packets stay on the
+primary. So an SF8 node next to
 an SF7 node with `--side-sfs 8` gets its messages acknowledged and can be
 messaged, while the SF7 mesh is untouched (verified 2026-09-11 with the
 Zephyr companion on SF8, both directions). Overrides are logged as

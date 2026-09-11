@@ -1,5 +1,6 @@
 #pragma once
 #include "HostRadio.h"
+#include <helpers/MultiSfMemory.h>
 #include <atomic>
 #include <condition_variable>
 #include <deque>
@@ -75,14 +76,9 @@ private:
     uint8_t sf;                       // SF the packet arrived on (a side detector's, or the primary)
   };
 
-  // Multi-SF replies: a node heard on a side detector gets answered on its own
-  // SF ("tx sf=N" to the modem), everything else goes out on the primary.
-  void noteRxSf(const std::vector<uint8_t>& pkt, uint8_t sf);
-  uint8_t pickTxSf(const uint8_t* bytes, int len, const char** why);
-  uint8_t _sf_by_hash[256] = {0};     // last SF a source hash was heard on (0 = never / primary)
-  int64_t _sf_ms[256] = {0};
-  uint8_t _last_side_sf = 0;          // most recent side-detector reception, for replies
-  int64_t _last_side_ms = 0;
+  // Multi-SF replies: a node heard on a side detector is answered on its own
+  // SF ("tx sf=N" to the modem); see src/helpers/MultiSfMemory.h for the rules.
+  MultiSfMemory _sfmem;
 
   Config _cfg;
   mutable std::mutex _cfg_mtx;
